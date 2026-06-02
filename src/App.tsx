@@ -724,23 +724,8 @@ function main() {
                 </div>
 
                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6">
-                   <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2 uppercase tracking-tighter">
-                     <Settings className="w-4 h-4 text-slate-500" />
-                     Apps Script 연동 가이드
-                   </h3>
                    <div className="space-y-4">
-                     <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg space-y-2">
-                        <p className="text-[10px] text-blue-400 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> [중요] 외부 배포(Vercel/Cloud Run) 필수
-                        </p>
-                        <p className="text-[10px] text-slate-300 leading-relaxed">
-                          현재 AI Studio 환경의 프리뷰 주소로는 앱의 보안 정책상 트레이딩 봇 서버(/api/*)로의 원격 접근 시 302/401 에러가 발생합니다.<br/>
-                          안정적인 자동매매를 위해서는 우측 상단의 <strong>톱니바퀴 (Settings)</strong>에서 <strong>[Deploy to Vercel]</strong> 또는 <strong>[Deploy to Cloud Run]</strong>을 클릭하여 배포해야 합니다.<br/>
-                          배포 완료 후 발급되는 <strong>새로운 URL (예: vercel.app)</strong>을 복사하여 아래 테스트 버튼이나 스크립트에 사용하세요.
-                        </p>
-                     </div>
-
-                     <div className="space-y-1.5 pt-2">
+                     <div className="space-y-1.5">
                         <label className="text-[10px] text-slate-500 font-mono uppercase">API URL (이곳에 배포된 외부 주소 입력)</label>
                         <input 
                           type="text"

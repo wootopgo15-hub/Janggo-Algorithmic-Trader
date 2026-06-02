@@ -122,7 +122,17 @@ function main() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ side, symbol, amount }),
       });
-      const data = await response.json();
+      
+      const contentType = response.headers.get("content-type");
+      let data: any = {};
+      
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        console.error("Trade Execution Non-JSON:", text);
+        data = { error: "서버 응답 형식이 올바르지 않습니다." };
+      }
       
       const newLog: TradeLog = {
         id: Math.random().toString(36).substr(2, 9),
@@ -158,6 +168,14 @@ function main() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, granularity }),
       });
+      
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response received:", text);
+        throw new Error("서버가 JSON 대신 HTML(웹페이지)을 반환했습니다. 앱을 새로고침하거나 공개 설정을 확인하세요.");
+      }
+
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Analysis failed");
       

@@ -61,7 +61,8 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const size = sizeNum.toFixed(volumePlace);
 
   if (sizeNum < parseFloat(contract.minTradeNum)) {
-    throw new Error(`Order size ${usdtAmount} USDT translates to ${size} ${contract.baseCoin}, which is smaller than the minimum allowed size of ${contract.minTradeNum} ${contract.baseCoin}.`);
+    const requiredUsdt = (parseFloat(contract.minTradeNum) * price * 1.05).toFixed(2); // 5% buffer
+    throw new Error(`Minimum trade size not met. Increase your order size to at least ${requiredUsdt} USDT (Bitget requires ${contract.minTradeNum} ${contract.baseCoin}).`);
   }
 
   const endpoint = "/api/v2/mix/order/place-order";
@@ -227,16 +228,16 @@ app.post("/api/analyze", async (req, res) => {
 
     let decision: "LONG" | "SHORT" | "HOLD" = "HOLD";
 
-    // LONG Conditions: RSI 30 Exit OR MACD Golden Cross
-    const rsiOversoldExit = prevRSI <= 30 && lastRSI > prevRSI;
+    // LONG Conditions: RSI 40 Exit OR MACD Golden Cross (Scalping)
+    const rsiOversoldExit = prevRSI <= 40 && lastRSI > prevRSI;
     const macdGoldenCross = prevMACD.MACD! < prevMACD.signal! && lastMACD.MACD! > lastMACD.signal!;
 
     if (rsiOversoldExit || macdGoldenCross) {
       decision = "LONG";
     }
 
-    // SHORT Conditions: RSI 70 Entry (falling from 70+) OR MACD Dead Cross
-    const rsiOverboughtFalling = prevRSI >= 70 && lastRSI < prevRSI;
+    // SHORT Conditions: RSI 60 Entry (falling from 60+) OR MACD Dead Cross
+    const rsiOverboughtFalling = prevRSI >= 60 && lastRSI < prevRSI;
     const macdDeadCross = prevMACD.MACD! > prevMACD.signal! && lastMACD.MACD! < lastMACD.signal!;
 
     if (rsiOverboughtFalling || macdDeadCross) {
@@ -244,12 +245,12 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     // Algorithmic Fallback Summary
-    const fallbackSummary = `[지표 분석] RSI(${lastRSI.toFixed(1)})와 MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} 포지션이 유리한 구간입니다. ATR 변동성: ${lastATR?.toFixed(2)}`;
+    const fallbackSummary = `[단타 지표] RSI(${lastRSI.toFixed(1)}) / MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} (ATR: ${lastATR?.toFixed(2)})`;
     let analysis_summary = fallbackSummary;
 
     if (genAI && process.env.GEMINI_API_KEY) {
       const prompt = `
-        당신은 고급 가상화폐 선물 퀀트 투자 전문가입니다. 다음 데이터를 분석하여 매매 결정을 내리세요.
+        당신은 스캘핑/단타 가상화폐 선물 퀀트 투자 전문가입니다. 잦은 매매와 회전율 극대화를 위한 분석을 제공하세요.
         
         [현재 시장 지표]
         현재 가격: ${closes[closes.length - 1]}
@@ -257,21 +258,20 @@ app.post("/api/analyze", async (req, res) => {
         MACD Line: ${lastMACD.MACD?.toFixed(4)}, Signal: ${lastMACD.signal?.toFixed(4)}
         ATR (14) 시장 변동성 측정치: ${lastATR?.toFixed(4)}
         
-        [매매 공식 업데이트 지침]
-        1. 지표 기반 신호 (참고):
-           - LONG: RSI 30 이하 탈출 또는 MACD 골든크로스
-           - SHORT: RSI 70 이상에서 하락 반전 또는 MACD 데드크로스
-        2. 동적 리스크 관리 및 손익비 (가장 중요 기준):
-           - 현재 지지선과 저항선, 그리고 구간의 ATR(변동성)을 종합적으로 고려하십시오.
-           - 시장 변동성(ATR)이 클 때는 손절 범위를 넓히고, 변동성이 작을 때는 좁히는 유동적인 관리가 필요하지만,
-           - 기본적으로 손절가는 진입가 대비 -2% 이내, 익절가는 최소 +5% 이상 나오는 "가성비 좋은 타점"일 때만 진입 신호를 내야 합니다.
-           - 위 손익비 조건이나 타점 기준을 만족하지 못한다면, 지표상 진입 구간이더라도 반드시 "HOLD"를 선택하십시오.
+        [스캘핑 매매 지침]
+        1. 지표 기반 신호 (적극적 진입):
+           - LONG: RSI 40 이하 반등 또는 MACD 골든크로스/단기 우상향
+           - SHORT: RSI 60 이상 저항 또는 MACD 데드크로스/단기 우하향
+        2. 리스크 관리 및 짧은 타점 (가장 중요 기준):
+           - 현재 당사 알고리즘의 목표 익절가는 가격 변동의 0.5% ~ 1.0% 사이이며, 손절가는 -0.5%로 매우 짧습니다.
+           - 방향성이 단기적으로 0.5% 이상 나올 수 있는 모멘텀이 보이면 주저 없이 "LONG" 혹은 "SHORT" 포지션을 내십시오.
+           - 모멘텀이 완전히 죽었거나 심각한 횡보 구간에서만 "HOLD"를 선택하십시오. 적극적인 매매 신호를 권장합니다.
         
         [응답 형식]
         반드시 JSON 형식으로 응답하십시오. 일반 텍스트나 포맷팅 기호(\`\`\`json 등)는 포함하지 말고 JSON 데이터만 출력하십시오.
         {
           "decision": "LONG",  // "LONG", "SHORT", "HOLD" 중 하나
-          "analysis": "해석 근거 요약 (최대 2문장)"
+          "analysis": "짧은 단위(0.5~1%) 단타/스캘핑 타점 위주의 해석 근거 요약 (최대 2문장)"
         }
       `;
 

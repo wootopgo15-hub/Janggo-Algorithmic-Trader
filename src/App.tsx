@@ -25,7 +25,7 @@ interface TradeLog {
 
 export default function App() {
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [granularity, setGranularity] = useState("1H");
+  const [granularity, setGranularity] = useState("15m");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +33,8 @@ export default function App() {
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
   const [orderSize, setOrderSize] = useState("15");
-  const [takeProfit, setTakeProfit] = useState("5");
-  const [stopLoss, setStopLoss] = useState("3");
+  const [takeProfit, setTakeProfit] = useState("1");
+  const [stopLoss, setStopLoss] = useState("0.5");
   const [logs, setLogs] = useState<TradeLog[]>(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_logs");
@@ -68,7 +68,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.5)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.6)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -252,8 +252,10 @@ function main() {
       setAnalysis(data);
 
       // Auto Trading Logic
-      if (isAutoTrade && data.decision !== "HOLD" && data.decision !== lastSignalRef.current) {
-        executeTrade(data.decision, orderSize, true);
+      if (isAutoTrade && data.decision !== lastSignalRef.current) {
+        if (data.decision !== "HOLD") {
+          executeTrade(data.decision, orderSize, true);
+        }
         lastSignalRef.current = data.decision;
       }
     } catch (err: any) {
@@ -353,7 +355,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.5</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.6</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">

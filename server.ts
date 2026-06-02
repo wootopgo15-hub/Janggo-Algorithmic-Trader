@@ -14,11 +14,14 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Vercel already parses the body into req.body. 
-// Using express.json() in Vercel will hang the request.
-if (!process.env.VERCEL) {
-  app.use(express.json());
-}
+// Safely handle body parsing across Vercel and generic Express environments
+app.use((req, res, next) => {
+  if (req.body !== undefined) {
+    next(); // Vercel already parsed it
+  } else {
+    express.json()(req, res, next);
+  }
+});
 
 // Bitget API Credentials (Retrieved from env)
 const getBitgetCreds = () => ({
@@ -275,12 +278,16 @@ app.post("/api/analyze", async (req, res) => {
 });
 
 app.post("/api/trade/execute", async (req, res) => {
+  console.log("[TRADE EXECUTE ENTRY] req.body:", req.body, "typeof:", typeof req.body);
   try {
     let body = req.body || {};
-    if (typeof body === 'string') {
-      try { body = JSON.parse(body); } catch (e) {}
+    if (Buffer.isBuffer(body)) {
+      try { body = JSON.parse(body.toString()); } catch (e) { console.error(e); }
+    } else if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) { console.error(e); }
     }
     const { side, symbol, amount } = body;
+    console.log(`[TRADE PARSED] side: ${side}, symbol: ${symbol}, amount: ${amount}`);
     // Map LONG/SHORT to buy/sell
     const bitgetSide = side === "LONG" ? "buy" : "sell";
     const result = await executeFuturesOrder(bitgetSide, symbol, amount);

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -29,7 +29,6 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isConfigured, setIsConfigured] = useState<boolean | null>(null);
   
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
@@ -46,13 +45,11 @@ export default function App() {
   const [stats, setStats] = useState(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_stats");
-      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
+      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
     } catch {
-      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
+      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
     }
   });
-
-  const [historyList, setHistoryList] = useState<any[]>([]);
 
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
@@ -71,7 +68,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.8)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.6)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -256,15 +253,16 @@ function main() {
 
       // Auto Trading Logic
       const currentCacheKey = `${symbol}_${granularity}`;
-      const previousDecision = lastSignalRef.current[currentCacheKey];
+      const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
       
-      if (isAutoTrade && previousDecision !== undefined && data.decision !== previousDecision) {
+      if (isAutoTrade && data.decision !== previousDecision) {
         if (data.decision !== "HOLD") {
           executeTrade(data.decision, orderSize, true);
         }
+        lastSignalRef.current[currentCacheKey] = data.decision;
       }
       
-      // Update ref anyway so it tracks properly
+      // Update ref anyway so it tracks properly even if auto trade is off
       lastSignalRef.current[currentCacheKey] = data.decision;
     } catch (err: any) {
       setError(err.message);
@@ -282,18 +280,6 @@ function main() {
   useEffect(() => {
     let balanceInterval: ReturnType<typeof setInterval>;
     
-    const checkConfig = async () => {
-      try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/status");
-        if (res.ok) {
-          const data = await res.json();
-          setIsConfigured(data.isConfigured);
-        }
-      } catch(e) {
-        console.error("Failed to check status", e);
-      }
-    };
-
     const fetchBalance = async () => {
       try {
         const res = await fetch(effectiveApiUrl + "/api/trade/balance");
@@ -331,26 +317,10 @@ function main() {
       }
     };
 
-    const fetchHistory = async () => {
-      try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/history");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            setHistoryList(data);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch history", e);
-      }
-    };
-
     if (isAutoTrade) {
       balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
     }
-    checkConfig();
     fetchBalance(); // Always fetch on mount or when dependencies change
-    fetchHistory();
     return () => clearInterval(balanceInterval);
   }, [isAutoTrade, effectiveApiUrl]);
 
@@ -391,7 +361,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.8</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.6</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -885,50 +855,17 @@ function main() {
                     </div>
                  </div>
 
-
-
-                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
-                   <div className="flex items-center justify-between mb-6">
-                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <History className="w-4 h-4 text-slate-500" />
-                        Purchase History (Bitget PnL)
-                     </h3>
-                   </div>
+                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
+                   <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
+                      <History className="w-4 h-4 text-slate-500" />
+                      Execution History
+                   </h3>
 
                    <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                     {historyList.length > 0 ? (
-                       historyList.map((item, idx) => {
-                         const profit = parseFloat(item.netProfit || item.achievedProfits || item.totalProfits || "0");
-                         const isWin = profit > 0;
-                         const isLoss = profit < 0;
-                         return (
-                           <div key={idx} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
-                              <div className="flex items-center gap-4">
-                                 <div className={cn("p-2 rounded-lg", isWin ? "bg-emerald-500/10 text-emerald-500" : isLoss ? "bg-rose-500/10 text-rose-500" : "bg-slate-500/10 text-slate-500")}>
-                                    {isWin ? <TrendingUp className="w-4 h-4" /> : isLoss ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                                 </div>
-                                 <div>
-                                    <div className="text-sm font-bold flex items-center gap-2">
-                                       {item.symbol}
-                                       <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono border", isWin ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : isLoss ? "bg-rose-500/10 text-rose-500 border-rose-500/20" : "bg-slate-500/10 text-slate-500 border-slate-500/20")}>
-                                          {isWin ? "PROFIT" : isLoss ? "LOSS" : "BREAK-EVEN"}
-                                       </span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                                       Margin Coin: {item.marginCoin || "USDT"} • Size: {item.size || item.openSize || "N/A"}
-                                    </div>
-                                 </div>
-                              </div>
-                              <div className={cn("text-sm font-bold font-mono transition-all", isWin ? "text-emerald-500" : isLoss ? "text-rose-500" : "text-slate-500")}>
-                                 {profit > 0 ? "+" : ""}{profit.toFixed(2)} USDT
-                              </div>
-                           </div>
-                         );
-                       })
-                     ) : logs.length === 0 ? (
+                     {logs.length === 0 ? (
                      <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
                         <History className="w-12 h-12 mb-2" />
-                        <p className="text-sm">No purchase history found</p>
+                        <p className="text-sm">No trades executed yet</p>
                      </div>
                    ) : (
                      logs.map((log) => (

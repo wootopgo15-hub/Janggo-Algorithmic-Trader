@@ -6,19 +6,21 @@ import { RSI, MACD } from "technicalindicators";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
+app.use(cors());
 app.use(express.json());
 
 // Bitget API Credentials (Retrieved from env)
 const getBitgetCreds = () => ({
-  apiKey: process.env.BITGET_API_KEY || "",
-  secretKey: process.env.BITGET_SECRET_KEY || "",
-  passphrase: process.env.BITGET_PASSPHRASE || "",
+  apiKey: process.env.BITGET_API_KEY || "bg_c0bb357a72c3fb92fd9b5cb49de3c424",
+  secretKey: process.env.BITGET_SECRET_KEY || "ece23d19f8e4a7b113effe079420f05cf9e1b8f433af8063593f40b090c84b45",
+  passphrase: process.env.BITGET_PASSPHRASE || "geminibot2026",
 });
 
 // Helper for Bitget V2 Signature
@@ -188,11 +190,12 @@ app.post("/api/analyze", async (req, res) => {
 
       try {
         const response = await genAI.models.generateContent({
-          model: "gemini-2.5-flash",
+          model: "gemini-1.5-flash",
           contents: prompt,
         });
         analysis_summary = response.text?.trim() || fallbackSummary;
       } catch (e: any) {
+        console.error("Gemini API Error Details:", e);
         console.log("Gemini fallback applied due to API limits or errors.");
         // Silent fallback - users will see the algorithmic prompt instead of an error message
         analysis_summary = fallbackSummary;
@@ -264,4 +267,8 @@ async function startServer() {
   });
 }
 
-startServer();
+export default app;
+
+if (!process.env.VERCEL) {
+  startServer();
+}

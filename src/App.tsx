@@ -37,7 +37,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">("analysis");
   const [analysisView, setAnalysisView] = useState<"indicators" | "live">("indicators");
   const [showScript, setShowScript] = useState(false);
-  const [customUrl, setCustomUrl] = useState("");
+  const [customUrl, setCustomUrl] = useState("https://janggo-algorithmic-trader.vercel.app");
   
   const lastSignalRef = useRef<Decision>("HOLD");
 
@@ -46,16 +46,15 @@ export default function App() {
   const appsScriptCode = `/**
  * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.5)
  * 
- * [중요 설정 안내 - 필독!]
- * 현재 상태(AI Studio 프리뷰)의 주소는 보안상 외부 봇(Apps Script)의 접근이 차단됩니다(302/401 에러).
- * 자동매매 봇을 구동하려면 앱을 실제 클라우드 로 배포해야 합니다.
+ * [중요 설정 안내]
+ * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
  * 
  * 👉 해결 방법:
- * 1. 앱 우측 상단 톱니바퀴(Settings) -> [Deploy to Cloud Run] 클릭
- * 2. 배포가 완료된 후 생성되는 진짜 Cloud Run 주소를 복사
- * 3. 아래 API_URL 큰따옴표 사이에 해당 주소를 붙여넣으세요.
+ * 1. 앱 우측 상단 톱니바퀴(Settings) -> [Deploy to Vercel/Cloud Run] 클릭
+ * 2. 배포가 완료된 후 발급되는 외부 접속 주소(URL)를 복사
+ * 3. 아래 API_URL 사이에 해당 주소를 붙여넣으세요.
  */
-const API_URL = "${effectiveApiUrl}"; // 여기에 배포된 Cloud Run 주소를 붙여넣으세요.
+const API_URL = "${effectiveApiUrl}"; // 여기에 배포된 Vercel/Cloud Run 주소를 붙여넣으세요.
 const SYMBOL = "${symbol}"; 
 const SIZE = "${orderSize}";
 
@@ -64,7 +63,7 @@ function main() {
   
   if (API_URL.indexOf("ai.studio") !== -1 || API_URL.indexOf("-dev-") !== -1 || API_URL.indexOf("-pre-") !== -1) {
     Logger.log("❌ 오류: 프리뷰 주소(" + API_URL + ")는 보안상 외부 접근이 불가능합니다.");
-    Logger.log("해결: Settings에서 'Deploy to Cloud Run'으로 배포한 후, 발급된 새로운 주소를 여기에 입력하세요.");
+    Logger.log("해결: Vercel이나 Cloud Run으로 배포한 후, 발급된 새로운 주소를 여기에 입력하세요.");
     return;
   }
   
@@ -152,7 +151,7 @@ function main() {
 
   const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false) => {
     try {
-      const response = await fetch("/api/trade/execute", {
+      const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ side, symbol, amount }),
@@ -198,7 +197,7 @@ function main() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/analyze", {
+      const response = await fetch(effectiveApiUrl + "/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symbol, granularity }),
@@ -613,19 +612,19 @@ function main() {
                      Apps Script 연동 가이드
                    </h3>
                    <div className="space-y-4">
-                     <div className="p-3 bg-rose-500/5 border border-rose-500/20 rounded-lg space-y-2">
-                        <p className="text-[10px] text-rose-400 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> [중요] Cloud Run 배포 필수
+                     <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg space-y-2">
+                        <p className="text-[10px] text-blue-400 font-bold flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> [중요] 외부 배포(Vercel/Cloud Run) 필수
                         </p>
                         <p className="text-[10px] text-slate-300 leading-relaxed">
-                          현재 AI Studio 환경에서는 외부 봇의 접근이 보안상 차단되어 응답 코드 302/404 에러가 발생합니다.<br/>
-                          작동하려면 우측 상단의 <strong>톱니바퀴 아이콘(Settings)</strong>에서 <strong>[Deploy to Cloud Run]</strong>을 통해 실제 클라우드로 배포해야 합니다.<br/>
-                          배포 후 생성되는 <strong>새로운 URL</strong>을 복사하여 아래 테스트 버튼이나 스크립트에 사용하세요.
+                          현재 AI Studio 환경의 프리뷰 주소로는 앱의 보안 정책상 트레이딩 봇 서버(/api/*)로의 원격 접근 시 302/401 에러가 발생합니다.<br/>
+                          안정적인 자동매매를 위해서는 우측 상단의 <strong>톱니바퀴 (Settings)</strong>에서 <strong>[Deploy to Vercel]</strong> 또는 <strong>[Deploy to Cloud Run]</strong>을 클릭하여 배포해야 합니다.<br/>
+                          배포 완료 후 발급되는 <strong>새로운 URL (예: vercel.app)</strong>을 복사하여 아래 테스트 버튼이나 스크립트에 사용하세요.
                         </p>
                      </div>
 
                      <div className="space-y-1.5 pt-2">
-                        <label className="text-[10px] text-slate-500 font-mono uppercase">API URL (이곳에 Cloud Run 주소 입력)</label>
+                        <label className="text-[10px] text-slate-500 font-mono uppercase">API URL (이곳에 배포된 외부 주소 입력)</label>
                         <input 
                           type="text"
                           value={customUrl}

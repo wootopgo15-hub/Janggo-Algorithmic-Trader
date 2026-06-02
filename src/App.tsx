@@ -37,54 +37,89 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">("analysis");
   const [analysisView, setAnalysisView] = useState<"indicators" | "live">("indicators");
   const [showScript, setShowScript] = useState(false);
-  const [publicUrl, setPublicUrl] = useState("");
+  const [customUrl, setCustomUrl] = useState("");
   
   const lastSignalRef = useRef<Decision>("HOLD");
 
-  const effectiveApiUrl = publicUrl || window.location.origin;
+  const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.0)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.5)
  * 
- * [설정 방법]
- * 1. 앱 상단 [Share] -> [Anyone with the link] (Public) 설정 후 URL 복사
- * 2. 아래 API_URL에 복사한 주소를 붙여넣으세요.
- * 3. 5분마다 자동 실행되도록 Apps Script 트리거를 설정하세요.
+ * [중요 설정 안내 - 필독!]
+ * 현재 상태(AI Studio 프리뷰)의 주소는 보안상 외부 봇(Apps Script)의 접근이 차단됩니다(302/401 에러).
+ * 자동매매 봇을 구동하려면 앱을 실제 클라우드 로 배포해야 합니다.
+ * 
+ * 👉 해결 방법:
+ * 1. 앱 우측 상단 톱니바퀴(Settings) -> [Deploy to Cloud Run] 클릭
+ * 2. 배포가 완료된 후 생성되는 진짜 Cloud Run 주소를 복사
+ * 3. 아래 API_URL 큰따옴표 사이에 해당 주소를 붙여넣으세요.
  */
-const API_URL = "${effectiveApiUrl}"; 
+const API_URL = "${effectiveApiUrl}"; // 여기에 배포된 Cloud Run 주소를 붙여넣으세요.
 const SYMBOL = "${symbol}"; 
 const SIZE = "${orderSize}";
 
 function main() {
   Logger.log("--- 분석 프로세스 시작 ---");
   
+  if (API_URL.indexOf("ai.studio") !== -1 || API_URL.indexOf("-dev-") !== -1 || API_URL.indexOf("-pre-") !== -1) {
+    Logger.log("❌ 오류: 프리뷰 주소(" + API_URL + ")는 보안상 외부 접근이 불가능합니다.");
+    Logger.log("해결: Settings에서 'Deploy to Cloud Run'으로 배포한 후, 발급된 새로운 주소를 여기에 입력하세요.");
+    return;
+  }
+  
   try {
     const options = {
       method: "post",
       contentType: "application/json",
       payload: JSON.stringify({ symbol: SYMBOL }),
-      muteHttpExceptions: true
+      muteHttpExceptions: true,
+      followRedirects: false
     };
     
-    const res = UrlFetchApp.fetch(API_URL + "/api/analyze", options);
-    const content = res.getContentText();
-    const code = res.getResponseCode();
+    // 이중 슬래시 방지 처리
+    const targetUrl = (API_URL + "/api/analyze").replace(/([^:]\\/)\\/+/g, "$1");
     
+    const res = UrlFetchApp.fetch(targetUrl, options);
+    const code = res.getResponseCode();
+    const content = res.getContentText();
+    
+    Logger.log("대상 URL : " + targetUrl);
     Logger.log("응답 코드: " + code);
+
+    if (code === 302 || code === 301 || code === 307) {
+      Logger.log("❌ 오류 " + code + ": 접근이 차단되었습니다 (로그인 페이지로 리다이렉트 됨).");
+      Logger.log("원인: 앱이 비공개(Private) 상태이거나 잘못된 주소를 사용 중입니다.");
+      Logger.log("해결: Share 버튼을 눌러 'Anyone with the link'로 설정한 Public URL을 사용하세요.");
+      return;
+    }
+
+    if (code === 404) {
+      Logger.log("❌ 오류 404: 경로를 찾을 수 없습니다.");
+      Logger.log("원인: API 주소가 잘못되었습니다. 앱 상단의 주소를 정확히 복사했는지 확인하세요.");
+      return;
+    }
+
+    if (code === 401 || code === 403) {
+      Logger.log("❌ 오류 " + code + ": 접근 거부.");
+      Logger.log("해결: 앱 우측 상단 'Share' 버튼을 눌러 'Anyone with the link' (Public)로 설정하세요.");
+      return;
+    }
 
     if (content.toLowerCase().indexOf("<!doctype") !== -1 || content.toLowerCase().indexOf("<html") !== -1) {
       Logger.log("❌ 오류: 서버가 JSON 대신 HTML을 반환했습니다.");
-      Logger.log("원인: 앱이 'Public'으로 공유되지 않았거나 세션이 만료되었습니다.");
-      Logger.log("해결: 앱 우측 상단 'Share' 버튼을 눌러 'Anyone with the link'로 설정하고 생성된 URL을 앱에 입력하세요.");
+      Logger.log("원인: 주소가 부정확하거나 서버 상태가 올바르지 않습니다.");
       return;
     }
 
-    if (code !== 200) {
-      Logger.log("❌ 서버 오류 (Code " + code + "): " + content);
+    let data;
+    try {
+      data = JSON.parse(content);
+    } catch (e) {
+      Logger.log("❌ JSON 파싱 실패: " + content.substring(0, 100));
       return;
     }
 
-    const data = JSON.parse(content);
     Logger.log("✅ 신호 분석: " + data.decision + " (" + data.analysis_summary + ")");
 
     if (data.decision === "LONG" || data.decision === "SHORT") {
@@ -98,7 +133,7 @@ function main() {
         }),
         muteHttpExceptions: true
       });
-      Logger.log("주문 실행 내역: " + tradeRes.getContentText());
+      Logger.log("주문 실행 결과: " + tradeRes.getContentText());
     }
     
     const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
@@ -446,7 +481,7 @@ function main() {
                             </div>
                           )}
                        </div>
-                       <ResponsiveContainer width="100%" height="90%">
+                       <ResponsiveContainer width="100%" height="90%" minWidth={1} minHeight={1}>
                           <ComposedChart data={chartData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
                             <XAxis dataKey="time" hide />
@@ -464,7 +499,7 @@ function main() {
                          Relative Strength Index (14)
                          <span className="text-[10px] text-indigo-400 bg-indigo-400/10 px-2 py-0.5 rounded">Strategy Zones</span>
                        </h3>
-                       <ResponsiveContainer width="100%" height="90%">
+                       <ResponsiveContainer width="100%" height="90%" minWidth={1} minHeight={1}>
                           <AreaChart data={chartData}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
                             <XAxis dataKey="time" hide />
@@ -578,52 +613,54 @@ function main() {
                      Apps Script 연동 가이드
                    </h3>
                    <div className="space-y-4">
-                     <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg space-y-2">
-                        <p className="text-[10px] text-blue-400 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> 필수 설정 안내
+                     <div className="p-3 bg-rose-500/5 border border-rose-500/20 rounded-lg space-y-2">
+                        <p className="text-[10px] text-rose-400 font-bold flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> [중요] Cloud Run 배포 필수
                         </p>
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
-                          1. 위쪽 <strong>Share</strong> 클릭<br/>
-                          2. <strong>Anyone with link</strong>로 변경<br/>
-                          3. 생성된 주소를 아래에 입력하세요.
+                        <p className="text-[10px] text-slate-300 leading-relaxed">
+                          현재 AI Studio 환경에서는 외부 봇의 접근이 보안상 차단되어 응답 코드 302/404 에러가 발생합니다.<br/>
+                          작동하려면 우측 상단의 <strong>톱니바퀴 아이콘(Settings)</strong>에서 <strong>[Deploy to Cloud Run]</strong>을 통해 실제 클라우드로 배포해야 합니다.<br/>
+                          배포 후 생성되는 <strong>새로운 URL</strong>을 복사하여 아래 테스트 버튼이나 스크립트에 사용하세요.
                         </p>
                      </div>
 
-                     <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-mono uppercase">Shared URL (공개 주소)</label>
+                     <div className="space-y-1.5 pt-2">
+                        <label className="text-[10px] text-slate-500 font-mono uppercase">API URL (이곳에 Cloud Run 주소 입력)</label>
                         <input 
                           type="text"
-                          placeholder="https://ais-share-..."
-                          value={publicUrl}
-                          onChange={(e) => setPublicUrl(e.target.value)}
-                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          value={customUrl}
+                          onChange={(e) => setCustomUrl(e.target.value.trim().replace(/\/+$/, ""))}
+                          placeholder={effectiveApiUrl}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-[10px] font-mono focus:outline-none focus:border-blue-500 text-slate-300"
                         />
                      </div>
 
-                     <div className="grid grid-cols-2 gap-2">
+                     <div className="grid grid-cols-2 gap-2 mt-4">
                        <button 
                          onClick={async () => {
-                           if (!publicUrl) return alert("공개 주소를 먼저 입력하세요.");
                            try {
-                             const res = await fetch(publicUrl + "/api/analyze", { method: "POST" });
-                             const text = await res.text();
-                             if (text.includes("<!doctype") || text.includes("<html")) {
-                               alert("❌ 오류: 주소는 맞지만 여전히 HTML을 반환합니다. 'Anyone with link' 설정이 맞는지 확인하세요.");
+                             const res = await fetch(effectiveApiUrl + "/api/analyze", { method: "POST" });
+                             const code = res.status;
+                             if (code === 401 || code === 403) {
+                               alert("❌ 오류 401/403: 접근이 거부되었습니다. 앱이 'Public(Anyone with link)'으로 설정되었는지 확인하세요.");
+                             } else if (code === 404) {
+                               alert("❌ 오류 404: 주소를 찾을 수 없습니다. (경로 오류)");
+                             } else if (res.headers.get("content-type")?.includes("text/html")) {
+                               alert("❌ 오류: 서버가 HTML을 반환합니다. (공개 설정 문제일 가능성 높음)");
                              } else {
-                               alert("✅ 성공: API가 정상적으로 JSON을 반환합니다!");
+                               alert("✅ 성공: 연결되었습니다! (Status: " + code + ")");
                              }
                            } catch (e) {
-                             alert("❌ 연결 실패: 주소를 확인하거나 앱이 서버에서 실행 중인지 확인하세요.");
+                             alert("❌ 연결 실패. 앱 공개 설정을 확인하세요.");
                            }
                          }}
-                         className="py-2 bg-[#21262d] border border-[#30363d] rounded-lg text-[10px] font-mono text-slate-400 hover:bg-[#30363d] transition-all"
+                         className="py-2 bg-[#21262d] border border-[#30363d] rounded-lg text-[10px] font-mono hover:bg-[#30363d] transition-all"
                        >
                          TEST_CONNECT
                        </button>
                        <button 
                          onClick={() => setShowScript(true)}
-                         disabled={!publicUrl}
-                         className="py-2 bg-blue-600 border border-blue-500 rounded-lg text-[10px] font-mono text-white hover:bg-blue-700 transition-all disabled:opacity-50"
+                         className="py-2 bg-blue-600 border border-blue-500 rounded-lg text-[10px] font-mono text-white hover:bg-blue-700 transition-all font-bold"
                        >
                          COPY_SCRIPT
                        </button>

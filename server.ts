@@ -103,9 +103,20 @@ async function fetchBitgetFuturesCandles(symbol: string = "BTCUSDT", granularity
   }
 }
 
+// Simple in-memory cache to prevent Gemini quota exhaustion
+const analysisCache: Record<string, { data: any, timestamp: number }> = {};
+const CACHE_DURATION = 15 * 60 * 1000; // Increased to 15 minutes to respect 20-req/day free tier quota
+
 app.post("/api/analyze", async (req, res) => {
   try {
     const { symbol = "BTCUSDT", granularity = "1H", customData } = req.body;
+    const cacheKey = `${symbol}_${granularity}`;
+
+    // Check cache first (ignore cache if customData is provided)
+    if (!customData && analysisCache[cacheKey] && (Date.now() - analysisCache[cacheKey].timestamp < CACHE_DURATION)) {
+      console.log(`[Cache Hit] Returning cached analysis for ${cacheKey}`);
+      return res.json(analysisCache[cacheKey].data);
+    }
 
     let candles: any[];
     if (customData) {
@@ -154,7 +165,9 @@ app.post("/api/analyze", async (req, res) => {
       decision = "SHORT";
     }
 
-    let analysis_summary = "현재 지표가 중립적이며 명확한 포지션 진입 신호가 없습니다.";
+    // Algorithmic Fallback Summary
+    const fallbackSummary = `[지표 분석] RSI(${lastRSI.toFixed(1)})와 MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} 포지션이 유리한 구간입니다.`;
+    let analysis_summary = fallbackSummary;
 
     if (process.env.GEMINI_API_KEY) {
       const prompt = `
@@ -175,23 +188,18 @@ app.post("/api/analyze", async (req, res) => {
 
       try {
         const response = await genAI.models.generateContent({
-          model: "gemini-flash-latest",
+          model: "gemini-2.5-flash",
           contents: prompt,
         });
-        analysis_summary = response.text?.trim() || analysis_summary;
+        analysis_summary = response.text?.trim() || fallbackSummary;
       } catch (e: any) {
-        console.error("Gemini failed", e);
-        if (e.message?.includes("429")) {
-          analysis_summary = "AI 분석 한도 초과 (무료 티어: 일 20회). 24시간 후 초기화되거나 유료 플랜 전환이 필요합니다. (기본 지표 분석으로 대체됨)";
-        } else if (e.message?.includes("503")) {
-          analysis_summary = "AI 서비스 일시적 지연 중입니다. 잠시 후 다시 시도해 주세요.";
-        } else {
-          analysis_summary = "AI 분석 중 오류가 발생했습니다. (기술적 지표 기반 분석 모드)";
-        }
+        console.log("Gemini fallback applied due to API limits or errors.");
+        // Silent fallback - users will see the algorithmic prompt instead of an error message
+        analysis_summary = fallbackSummary;
       }
     }
 
-    res.json({
+    const result = {
       decision,
       analysis_summary,
       indicators: {
@@ -199,7 +207,17 @@ app.post("/api/analyze", async (req, res) => {
         macd: macdResult.slice(-20)
       },
       lastPrices: closes.slice(-20)
-    });
+    };
+
+    // Update cache
+    if (!customData) {
+      analysisCache[cacheKey] = {
+        data: result,
+        timestamp: Date.now()
+      };
+    }
+
+    res.json(result);
 
   } catch (error: any) {
     res.status(500).json({ error: error.message });

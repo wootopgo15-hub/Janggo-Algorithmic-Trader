@@ -33,7 +33,31 @@ export default function App() {
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
   const [orderSize, setOrderSize] = useState("15");
-  const [logs, setLogs] = useState<TradeLog[]>([]);
+  const [takeProfit, setTakeProfit] = useState("5");
+  const [stopLoss, setStopLoss] = useState("3");
+  const [logs, setLogs] = useState<TradeLog[]>(() => {
+    try {
+      const saved = localStorage.getItem("janggo_trade_logs");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  
+  const [stats, setStats] = useState(() => {
+    try {
+      const saved = localStorage.getItem("janggo_trade_stats");
+      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+    } catch {
+      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
+  }, [logs]);
+
+  useEffect(() => {
+    localStorage.setItem("janggo_trade_stats", JSON.stringify(stats));
+  }, [stats]);
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">("analysis");
   const [analysisView, setAnalysisView] = useState<"indicators" | "live">("indicators");
   const [showScript, setShowScript] = useState(false);
@@ -44,7 +68,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.2)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.5)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -57,6 +81,8 @@ export default function App() {
 const API_URL = "${effectiveApiUrl}"; // 여기에 배포된 Vercel/Cloud Run 주소를 붙여넣으세요.
 const SYMBOL = "${symbol}"; 
 const SIZE = "${orderSize}";
+const TAKE_PROFIT = "${takeProfit}";
+const STOP_LOSS = "${stopLoss}";
 
 function main() {
   Logger.log("--- 분석 프로세스 시작 ---");
@@ -136,7 +162,9 @@ function main() {
         payload: JSON.stringify({
           side: data.decision,
           symbol: SYMBOL,
-          amount: SIZE
+          amount: SIZE,
+          takeProfit: TAKE_PROFIT,
+          stopLoss: STOP_LOSS
         }),
         muteHttpExceptions: true
       });
@@ -162,7 +190,7 @@ function main() {
       const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ side, symbol, amount }),
+        body: JSON.stringify({ side, symbol, amount, takeProfit, stopLoss }),
       });
       
       const contentType = response.headers.get("content-type");
@@ -241,6 +269,53 @@ function main() {
     return () => clearInterval(interval);
   }, [isAutoTrade, symbol, granularity]);
 
+  useEffect(() => {
+    let balanceInterval: ReturnType<typeof setInterval>;
+    
+    const fetchBalance = async () => {
+      try {
+        const res = await fetch(effectiveApiUrl + "/api/trade/balance");
+        if (res.ok) {
+          const data = await res.json();
+          setStats((prev: any) => {
+            const currentEq = data.equity;
+            const isInitial = prev.initialEquity === null;
+            const newProfit = isInitial ? 0 : currentEq - prev.initialEquity;
+            
+            // Check for realized jump (a simple heuristic for closed trades since we don't fetch order history here)
+            let wCount = prev.winCount;
+            let lCount = prev.lossCount;
+            
+            // If the PnL changes by more than $1 USDT suddenly (realized), we count it as a trade closing
+            const diff = prev.currentEquity !== null ? currentEq - prev.currentEquity : 0;
+            if (Math.abs(diff) > 1.0) {
+              if (diff > 0) wCount++;
+              else lCount++;
+            }
+
+            return {
+              ...prev,
+              initialEquity: isInitial ? currentEq : prev.initialEquity,
+              currentEquity: currentEq,
+              totalProfit: newProfit,
+              unrealizedPL: data.unrealizedPL,
+              winCount: wCount,
+              lossCount: lCount
+            };
+          });
+        }
+      } catch (e) {
+        console.error("Failed to fetch balance", e);
+      }
+    };
+
+    if (isAutoTrade) {
+      balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
+    }
+    fetchBalance(); // Always fetch on mount or when dependencies change
+    return () => clearInterval(balanceInterval);
+  }, [isAutoTrade, effectiveApiUrl]);
+
   const getStatusColor = (decision: Decision) => {
     switch (decision) {
       case "LONG": return "text-emerald-500 bg-emerald-500/10 border-emerald-500/20";
@@ -278,7 +353,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.2</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.5</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -587,6 +662,29 @@ function main() {
                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                        />
                     </div>
+                    
+                    <div className="grid grid-cols-2 gap-3 mt-4">
+                       <div className="space-y-1.5">
+                          <label className="text-xs text-slate-500 font-mono uppercase text-emerald-500/80">Take Profit (%)</label>
+                          <input 
+                            type="number"
+                            value={takeProfit}
+                            onChange={(e) => setTakeProfit(e.target.value)}
+                            className="w-full bg-[#0d1117] border border-emerald-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            placeholder="0 (Off)"
+                          />
+                       </div>
+                       <div className="space-y-1.5">
+                          <label className="text-xs text-slate-500 font-mono uppercase text-rose-500/80">Stop Loss (%)</label>
+                          <input 
+                            type="number"
+                            value={stopLoss}
+                            onChange={(e) => setStopLoss(e.target.value)}
+                            className="w-full bg-[#0d1117] border border-rose-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-500"
+                            placeholder="0 (Off)"
+                          />
+                       </div>
+                    </div>
 
                     <div className="pt-4 grid grid-cols-2 gap-3">
                        <button 
@@ -712,15 +810,51 @@ function main() {
                  </div>
                )}
 
-              {/* Execution Logs */}
-              <div className="md:col-span-2 bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col h-full">
-                 <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
-                    <History className="w-4 h-4 text-slate-500" />
-                    Execution History
-                 </h3>
+              {/* Execution Logs & Stats */}
+              <div className="md:col-span-2 flex flex-col gap-4 h-full">
+                 {/* Stats Board */}
+                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 relative">
+                    <button 
+                      onClick={() => setStats({ winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 })}
+                      className="absolute top-4 right-4 text-[10px] text-slate-500 hover:text-white transition-colors uppercase font-mono"
+                    >
+                      Reset Stats
+                    </button>
+                    <div className="grid grid-cols-3 gap-4">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-500 font-mono uppercase">Total Trades</span>
+                        <span className="text-xl font-bold text-white font-mono">{stats.winCount + stats.lossCount + (logs.length > 0 ? logs.length : 0)}</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-500 font-mono uppercase">Profit / Loss (USDT)</span>
+                        <div className="flex items-baseline gap-2">
+                          <span className={cn("text-xl font-bold font-mono", stats.totalProfit >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                            {stats.totalProfit > 0 ? "+" : ""}{stats.totalProfit.toFixed(2)}
+                          </span>
+                          <span className={cn("text-[10px] font-mono", stats.unrealizedPL >= 0 ? "text-emerald-500/70" : "text-rose-500/70")}>
+                             (Open: {stats.unrealizedPL > 0 ? "+" : ""}{(stats.unrealizedPL || 0).toFixed(2)})
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-500 font-mono uppercase">Win Rate</span>
+                        <span className="text-xl font-bold text-white font-mono">
+                           {stats.winCount + stats.lossCount > 0 
+                             ? ((stats.winCount / (stats.winCount + stats.lossCount)) * 100).toFixed(1)
+                             : "0.0"}%
+                        </span>
+                      </div>
+                    </div>
+                 </div>
 
-                 <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                   {logs.length === 0 ? (
+                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
+                   <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
+                      <History className="w-4 h-4 text-slate-500" />
+                      Execution History
+                   </h3>
+
+                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                     {logs.length === 0 ? (
                      <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
                         <History className="w-12 h-12 mb-2" />
                         <p className="text-sm">No trades executed yet</p>
@@ -751,6 +885,7 @@ function main() {
                      ))
                    )}
                  </div>
+              </div>
               </div>
             </motion.div>
           )}

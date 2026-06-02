@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import axios from "axios";
-import { RSI, MACD } from "technicalindicators";
+import { RSI, MACD, ATR } from "technicalindicators";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -37,7 +37,7 @@ function generateBitgetSignature(timestamp: string, method: string, path: string
   return crypto.createHmac("sha256", secretKey).update(message).digest("base64");
 }
 
-async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmount: string) {
+async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmount: string, takeProfitPct?: string, stopLossPct?: string) {
   const { apiKey, passphrase } = getBitgetCreds();
   if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing in environment");
 
@@ -67,6 +67,25 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const endpoint = "/api/v2/mix/order/place-order";
   const timestamp = Date.now().toString();
   
+  // Calculate TP and SL prices if provided
+  const pricePlace = parseInt(contract.pricePlace || "1", 10);
+  const priceFactor = Math.pow(10, pricePlace);
+  const tpPct = parseFloat(takeProfitPct || "0");
+  const slPct = parseFloat(stopLossPct || "0");
+  
+  let presetTakeProfitPrice;
+  let presetStopLossPrice;
+
+  if (tpPct > 0) {
+    let tpTarget = side === "buy" ? price * (1 + tpPct / 100) : price * (1 - tpPct / 100);
+    presetTakeProfitPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
+  }
+
+  if (slPct > 0) {
+    let slTarget = side === "buy" ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
+    presetStopLossPrice = (Math.round(slTarget * priceFactor) / priceFactor).toFixed(pricePlace);
+  }
+  
   // Bitget Futures Order Payload
   const body = {
     symbol,
@@ -76,7 +95,9 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
     size: size,   // Base coin amount
     side: side,   // buy or sell
     tradeSide: "open", // open or close
-    orderType: "market"
+    orderType: "market",
+    ...(presetTakeProfitPrice ? { presetTakeProfitPrice } : {}),
+    ...(presetStopLossPrice ? { presetStopLossPrice } : {})
   };
 
   const bodyStr = JSON.stringify(body);
@@ -199,6 +220,11 @@ app.post("/api/analyze", async (req, res) => {
     const lastMACD = macdResult[macdResult.length - 1];
     const prevMACD = macdResult[macdResult.length - 2];
 
+    const highs = candles.map(c => c.high);
+    const lows = candles.map(c => c.low);
+    const atrValues = ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+    const lastATR = atrValues[atrValues.length - 1];
+
     let decision: "LONG" | "SHORT" | "HOLD" = "HOLD";
 
     // LONG Conditions: RSI 30 Exit OR MACD Golden Cross
@@ -218,24 +244,35 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     // Algorithmic Fallback Summary
-    const fallbackSummary = `[지표 분석] RSI(${lastRSI.toFixed(1)})와 MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} 포지션이 유리한 구간입니다.`;
+    const fallbackSummary = `[지표 분석] RSI(${lastRSI.toFixed(1)})와 MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} 포지션이 유리한 구간입니다. ATR 변동성: ${lastATR?.toFixed(2)}`;
     let analysis_summary = fallbackSummary;
 
     if (genAI && process.env.GEMINI_API_KEY) {
       const prompt = `
-        당신은 고급 가상화폐 선물 퀀트 투자 전문가입니다. 다음 데이터를 분석하여 매매 결정을 내렸습니다.
+        당신은 고급 가상화폐 선물 퀀트 투자 전문가입니다. 다음 데이터를 분석하여 매매 결정을 내리세요.
         
-        결정: ${decision}
-        RSI (14): ${lastRSI.toFixed(2)} (이전: ${prevRSI?.toFixed(2)})
-        MACD Line: ${lastMACD.MACD?.toFixed(4)}
-        MACD Signal: ${lastMACD.signal?.toFixed(4)}
+        [현재 시장 지표]
         현재 가격: ${closes[closes.length - 1]}
+        RSI (14): ${lastRSI.toFixed(2)} (이전: ${prevRSI?.toFixed(2)})
+        MACD Line: ${lastMACD.MACD?.toFixed(4)}, Signal: ${lastMACD.signal?.toFixed(4)}
+        ATR (14) 시장 변동성 측정치: ${lastATR?.toFixed(4)}
         
-        선물 매매 규칙:
-        - LONG: RSI 30 이하 탈출 또는 MACD 골든크로스
-        - SHORT: RSI 70 이상에서 하락 반전 또는 MACD 데드크로스
+        [매매 공식 업데이트 지침]
+        1. 지표 기반 신호 (참고):
+           - LONG: RSI 30 이하 탈출 또는 MACD 골든크로스
+           - SHORT: RSI 70 이상에서 하락 반전 또는 MACD 데드크로스
+        2. 동적 리스크 관리 및 손익비 (가장 중요 기준):
+           - 현재 지지선과 저항선, 그리고 구간의 ATR(변동성)을 종합적으로 고려하십시오.
+           - 시장 변동성(ATR)이 클 때는 손절 범위를 넓히고, 변동성이 작을 때는 좁히는 유동적인 관리가 필요하지만,
+           - 기본적으로 손절가는 진입가 대비 -2% 이내, 익절가는 최소 +5% 이상 나오는 "가성비 좋은 타점"일 때만 진입 신호를 내야 합니다.
+           - 위 손익비 조건이나 타점 기준을 만족하지 못한다면, 지표상 진입 구간이더라도 반드시 "HOLD"를 선택하십시오.
         
-        이 결정에 대한 분석 및 선물 포지션 진입 근거를 한국어로 요약하여 최대 1문장으로 작성하십시오.
+        [응답 형식]
+        반드시 JSON 형식으로 응답하십시오. 일반 텍스트나 포맷팅 기호(\`\`\`json 등)는 포함하지 말고 JSON 데이터만 출력하십시오.
+        {
+          "decision": "LONG",  // "LONG", "SHORT", "HOLD" 중 하나
+          "analysis": "해석 근거 요약 (최대 2문장)"
+        }
       `;
 
       try {
@@ -243,10 +280,20 @@ app.post("/api/analyze", async (req, res) => {
           model: "gemini-1.5-flash",
           contents: prompt,
         });
-        analysis_summary = response.text?.trim() || fallbackSummary;
+        
+        let aiText = response.text?.trim() || "{}";
+        aiText = aiText.replace(/```json/i, "").replace(/```/g, "").trim();
+        const aiJson = JSON.parse(aiText);
+        
+        if (aiJson.decision === "LONG" || aiJson.decision === "SHORT" || aiJson.decision === "HOLD") {
+          decision = aiJson.decision;
+        }
+        if (aiJson.analysis) {
+          analysis_summary = aiJson.analysis;
+        }
       } catch (e: any) {
         console.error("Gemini API Error Details:", e);
-        console.log("Gemini fallback applied due to API limits or errors.");
+        console.log("Gemini fallback applied due to API limits or parsing errors.");
         // Silent fallback - users will see the algorithmic prompt instead of an error message
         analysis_summary = fallbackSummary;
       }
@@ -277,6 +324,40 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 
+app.get("/api/trade/balance", async (req, res) => {
+  try {
+    const { apiKey, passphrase } = getBitgetCreds();
+    if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
+
+    const endpoint = "/api/v2/mix/account/accounts?productType=USDT-FUTURES";
+    const timestamp = Date.now().toString();
+    const message = timestamp + "GET" + endpoint;
+    const signature = crypto.createHmac("sha256", getBitgetCreds().secretKey).update(message).digest("base64");
+
+    const response = await axios.get(`https://api.bitget.com${endpoint}`, {
+      headers: {
+        "ACCESS-KEY": apiKey,
+        "ACCESS-SIGN": signature,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": passphrase,
+        "Content-Type": "application/json",
+      }
+    });
+
+    if (response.data.code !== "00000") {
+      return res.status(400).json({ error: response.data.msg });
+    }
+
+    const data = response.data.data[0];
+    res.json({
+      equity: parseFloat(data.accountEquity),
+      unrealizedPL: parseFloat(data.unrealizedPL || "0")
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/trade/execute", async (req, res) => {
   console.log("[TRADE EXECUTE ENTRY] req.body:", req.body, "typeof:", typeof req.body);
   try {
@@ -286,11 +367,14 @@ app.post("/api/trade/execute", async (req, res) => {
     } else if (typeof body === 'string') {
       try { body = JSON.parse(body); } catch (e) { console.error(e); }
     }
-    const { side, symbol, amount } = body;
-    console.log(`[TRADE PARSED] side: ${side}, symbol: ${symbol}, amount: ${amount}`);
+    const { side, symbol, amount, takeProfit, stopLoss } = body;
+    if (!symbol) return res.status(400).json({ error: "Missing symbol in request" });
+    if (!amount) return res.status(400).json({ error: "Missing amount in request" });
+    
+    console.log(`[TRADE PARSED] side: ${side}, symbol: ${symbol}, amount: ${amount}, TP: ${takeProfit}, SL: ${stopLoss}`);
     // Map LONG/SHORT to buy/sell
     const bitgetSide = side === "LONG" ? "buy" : "sell";
-    const result = await executeFuturesOrder(bitgetSide, symbol, amount);
+    const result = await executeFuturesOrder(bitgetSide, symbol, amount, takeProfit, stopLoss);
     if (result.code !== "00000") {
       return res.status(400).json({ error: result.msg || "Order failed" });
     }

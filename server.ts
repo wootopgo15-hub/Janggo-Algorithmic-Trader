@@ -41,11 +41,6 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const { apiKey, passphrase } = getBitgetCreds();
   if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing in environment");
 
-  if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
-    console.log(`[MOCK TRADE] ${side} ${symbol} ${usdtAmount} USDT`);
-    return { code: "00000", msg: "success", data: { orderId: `mock_order_${Date.now()}` } };
-  }
-
   // 1. Get contract precision
   const contractsRes = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES');
   const contract = contractsRes.data.data.find((c: any) => c.symbol === symbol);
@@ -333,23 +328,10 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 
-app.get("/api/trade/status", (req, res) => {
-  const { apiKey } = getBitgetCreds();
-  const isDummy = apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424";
-  res.json({ isConfigured: !isDummy });
-});
-
 app.get("/api/trade/balance", async (req, res) => {
   try {
     const { apiKey, passphrase } = getBitgetCreds();
     if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
-
-    if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
-      return res.json({
-        equity: 10000,
-        unrealizedPL: 15.5
-      });
-    }
 
     const endpoint = "/api/v2/mix/account/accounts?productType=USDT-FUTURES";
     const timestamp = Date.now().toString();
@@ -376,102 +358,6 @@ app.get("/api/trade/balance", async (req, res) => {
       unrealizedPL: parseFloat(data.unrealizedPL || "0")
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get("/api/trade/positions", async (req, res) => {
-  try {
-    const { apiKey, passphrase, secretKey } = getBitgetCreds();
-    if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
-
-    if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
-      return res.json([
-        { symbol: "BTCUSDT", holdSide: "long", total: "0.15", unrealizedPL: "15.5", leverage: "15" },
-        { symbol: "ETHUSDT", holdSide: "short", total: "1.2", unrealizedPL: "-2.4", leverage: "10" }
-      ]);
-    }
-
-    const endpoint = "/api/v2/mix/position/all-position?productType=USDT-FUTURES&marginCoin=USDT";
-    const timestamp = Date.now().toString();
-    const message = timestamp + "GET" + endpoint;
-    const signature = crypto.createHmac("sha256", secretKey).update(message).digest("base64");
-
-    const response = await axios.get(`https://api.bitget.com${endpoint}`, {
-      headers: {
-        "ACCESS-KEY": apiKey,
-        "ACCESS-SIGN": signature,
-        "ACCESS-TIMESTAMP": timestamp,
-        "ACCESS-PASSPHRASE": passphrase,
-        "Content-Type": "application/json",
-      }
-    });
-
-    if (response.data.code !== "00000") {
-      return res.status(400).json({ error: response.data.msg });
-    }
-
-    const responseData = response.data.data;
-    const arrayData = Array.isArray(responseData) ? responseData : (responseData?.list || []);
-    res.json(arrayData);
-  } catch (error: any) {
-    if (error.response) {
-      console.error(error.response.data);
-      return res.status(error.response.status).json({ error: error.response.data });
-    }
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get("/api/trade/history", async (req, res) => {
-  try {
-    const { apiKey, passphrase, secretKey } = getBitgetCreds();
-    if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
-
-    if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
-      // Mock Data for dummy key
-      return res.json([
-        { symbol: "BTCUSDT", netProfit: "12.50", marginCoin: "USDT" },
-        { symbol: "BTCUSDT", netProfit: "-2.50", marginCoin: "USDT" },
-        { symbol: "BTCUSDT", netProfit: "15.00", marginCoin: "USDT" },
-        { symbol: "ETHUSDT", netProfit: "5.20", marginCoin: "USDT" },
-        { symbol: "ETHUSDT", netProfit: "-1.10", marginCoin: "USDT" },
-        { symbol: "SOLUSDT", netProfit: "-3.50", marginCoin: "USDT" },
-        { symbol: "SOLUSDT", netProfit: "8.00", marginCoin: "USDT" },
-        { symbol: "DOGEUSDT", netProfit: "0.50", marginCoin: "USDT" },
-      ]);
-    }
-
-    const endTime = Date.now().toString();
-    const startTime = (Date.now() - 30 * 24 * 60 * 60 * 1000).toString(); // 30 days
-    const endpoint = `/api/v2/mix/position/history-position?endTime=${endTime}&limit=100&productType=USDT-FUTURES&startTime=${startTime}`;
-    const timestamp = Date.now().toString();
-    const message = timestamp + "GET" + endpoint;
-    const signature = crypto.createHmac("sha256", secretKey).update(message).digest("base64");
-
-    const response = await axios.get(`https://api.bitget.com${endpoint}`, {
-      headers: {
-        "ACCESS-KEY": apiKey,
-        "ACCESS-SIGN": signature,
-        "ACCESS-TIMESTAMP": timestamp,
-        "ACCESS-PASSPHRASE": passphrase,
-        "Content-Type": "application/json",
-      }
-    });
-
-    if (response.data.code !== "00000") {
-      return res.status(400).json({ error: response.data.msg });
-    }
-
-    // Process the history
-    const responseData = response.data.data;
-    const arrayData = Array.isArray(responseData) ? responseData : (responseData?.list || []);
-    res.json(arrayData);
-  } catch (error: any) {
-    if (error.response) {
-      console.error(error.response.data);
-      return res.status(error.response.status).json({ error: error.response.data });
-    }
     res.status(500).json({ error: error.message });
   }
 });

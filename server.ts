@@ -264,8 +264,9 @@ app.post("/api/trade/execute", async (req, res) => {
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    const getVite = new Function('return import("vite")');
+    const { createServer: createViteServer } = await getVite();
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

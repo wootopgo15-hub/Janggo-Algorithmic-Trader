@@ -44,7 +44,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.5)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.0)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -276,7 +276,10 @@ function main() {
               <BarChart2 className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-white">Crypto Quant Expert</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.0</span>
+              </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
                   <span className="flex items-center gap-1.5">

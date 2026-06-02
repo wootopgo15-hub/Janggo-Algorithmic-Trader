@@ -51,7 +51,7 @@ export default function App() {
     }
   });
 
-  const [coinStats, setCoinStats] = useState<Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }>>({});
+  const [historyList, setHistoryList] = useState<any[]>([]);
 
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
@@ -70,7 +70,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.6)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.7)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -323,19 +323,8 @@ function main() {
         const res = await fetch(effectiveApiUrl + "/api/trade/history");
         if (res.ok) {
           const data = await res.json();
-          const grouped: Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }> = {};
-          
           if (Array.isArray(data)) {
-            data.forEach((item: any) => {
-              const sym = item.symbol;
-              const profit = parseFloat(item.netProfit || item.achievedProfits || item.totalProfits || "0");
-              if (!grouped[sym]) grouped[sym] = { winCount: 0, lossCount: 0, totalProfit: 0, trades: 0 };
-              grouped[sym].trades++;
-              grouped[sym].totalProfit += profit;
-              if (profit > 0) grouped[sym].winCount++;
-              if (profit < 0) grouped[sym].lossCount++;
-            });
-            setCoinStats(grouped);
+            setHistoryList(data);
           }
         }
       } catch (e) {
@@ -388,7 +377,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.6</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.7</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -882,43 +871,50 @@ function main() {
                     </div>
                  </div>
 
-                 {Object.keys(coinStats).length > 0 && (
-                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-4 shrink-0">
-                      <h3 className="text-[11px] text-slate-500 font-mono uppercase mb-3 px-2">Performance by Coin</h3>
-                      <div className="space-y-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                        {Object.entries(coinStats).map(([sym, cStats]) => {
-                           const wRate = cStats.winCount + cStats.lossCount > 0 
-                             ? ((cStats.winCount / (cStats.winCount + cStats.lossCount)) * 100).toFixed(0)
-                             : "0";
-                           return (
-                             <div key={sym} className="flex justify-between items-center text-sm py-1.5 border-b border-[#30363d]/50 last:border-0 px-2 flex-wrap">
-                               <span className="font-mono text-slate-300 font-bold">{sym}</span>
-                               <div className="flex gap-4 items-center">
-                                 <span className={cn("font-mono font-bold w-16 text-right", cStats.totalProfit >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                                   {cStats.totalProfit > 0 ? "+" : ""}{cStats.totalProfit.toFixed(2)}
-                                 </span>
-                                 <span className="font-mono text-[10px] w-24 text-right text-slate-400 uppercase">
-                                   {wRate}% ({cStats.trades}T)
-                                 </span>
-                               </div>
-                             </div>
-                           );
-                        })}
-                      </div>
-                    </div>
-                  )}
 
-                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
-                   <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
-                      <History className="w-4 h-4 text-slate-500" />
-                      Execution History
-                   </h3>
+
+                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
+                   <div className="flex items-center justify-between mb-6">
+                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <History className="w-4 h-4 text-slate-500" />
+                        Purchase History (Bitget PnL)
+                     </h3>
+                   </div>
 
                    <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                     {logs.length === 0 ? (
+                     {historyList.length > 0 ? (
+                       historyList.map((item, idx) => {
+                         const profit = parseFloat(item.netProfit || item.achievedProfits || item.totalProfits || "0");
+                         const isWin = profit > 0;
+                         const isLoss = profit < 0;
+                         return (
+                           <div key={idx} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
+                              <div className="flex items-center gap-4">
+                                 <div className={cn("p-2 rounded-lg", isWin ? "bg-emerald-500/10 text-emerald-500" : isLoss ? "bg-rose-500/10 text-rose-500" : "bg-slate-500/10 text-slate-500")}>
+                                    {isWin ? <TrendingUp className="w-4 h-4" /> : isLoss ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+                                 </div>
+                                 <div>
+                                    <div className="text-sm font-bold flex items-center gap-2">
+                                       {item.symbol}
+                                       <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono border", isWin ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : isLoss ? "bg-rose-500/10 text-rose-500 border-rose-500/20" : "bg-slate-500/10 text-slate-500 border-slate-500/20")}>
+                                          {isWin ? "PROFIT" : isLoss ? "LOSS" : "BREAK-EVEN"}
+                                       </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                       Margin Coin: {item.marginCoin || "USDT"} • Size: {item.size || item.openSize || "N/A"}
+                                    </div>
+                                 </div>
+                              </div>
+                              <div className={cn("text-sm font-bold font-mono transition-all", isWin ? "text-emerald-500" : isLoss ? "text-rose-500" : "text-slate-500")}>
+                                 {profit > 0 ? "+" : ""}{profit.toFixed(2)} USDT
+                              </div>
+                           </div>
+                         );
+                       })
+                     ) : logs.length === 0 ? (
                      <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
                         <History className="w-12 h-12 mb-2" />
-                        <p className="text-sm">No trades executed yet</p>
+                        <p className="text-sm">No purchase history found</p>
                      </div>
                    ) : (
                      logs.map((log) => (

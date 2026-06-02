@@ -34,9 +34,32 @@ function generateBitgetSignature(timestamp: string, method: string, path: string
   return crypto.createHmac("sha256", secretKey).update(message).digest("base64");
 }
 
-async function executeFuturesOrder(side: "buy" | "sell", symbol: string, amount: string) {
+async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmount: string) {
   const { apiKey, passphrase } = getBitgetCreds();
   if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing in environment");
+
+  // 1. Get contract precision
+  const contractsRes = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES');
+  const contract = contractsRes.data.data.find((c: any) => c.symbol === symbol);
+  if (!contract) throw new Error(`Symbol ${symbol} not found on Bitget`);
+  const volumePlace = parseInt(contract.volumePlace, 10);
+
+  // 2. Get current price
+  const tickerRes = await axios.get(`https://api.bitget.com/api/v2/mix/market/ticker?symbol=${symbol}&productType=USDT-FUTURES`);
+  const price = parseFloat(tickerRes.data.data[0].markPrice);
+
+  // 3. Calculate size
+  const requestedUsdt = parseFloat(usdtAmount);
+  let sizeNum = requestedUsdt / price;
+  
+  // Truncate to required decimal places
+  const factor = Math.pow(10, volumePlace);
+  sizeNum = Math.floor(sizeNum * factor) / factor;
+  const size = sizeNum.toFixed(volumePlace);
+
+  if (sizeNum < parseFloat(contract.minTradeNum)) {
+    throw new Error(`Order size ${usdtAmount} USDT translates to ${size} ${contract.baseCoin}, which is smaller than the minimum allowed size of ${contract.minTradeNum} ${contract.baseCoin}.`);
+  }
 
   const endpoint = "/api/v2/mix/order/place-order";
   const timestamp = Date.now().toString();
@@ -47,7 +70,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, amount:
     productType: "USDT-FUTURES",
     marginMode: "isolated",
     marginCoin: "USDT",
-    size: amount, // For futures, size is usually the contract count or coin amount
+    size: size,   // Base coin amount
     side: side,   // buy or sell
     tradeSide: "open", // open or close
     orderType: "market"
@@ -56,17 +79,24 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, amount:
   const bodyStr = JSON.stringify(body);
   const signature = generateBitgetSignature(timestamp, "POST", endpoint, bodyStr);
 
-  const response = await axios.post(`https://api.bitget.com${endpoint}`, body, {
-    headers: {
-      "ACCESS-KEY": apiKey,
-      "ACCESS-SIGN": signature,
-      "ACCESS-TIMESTAMP": timestamp,
-      "ACCESS-PASSPHRASE": passphrase,
-      "Content-Type": "application/json",
+  try {
+    const response = await axios.post(`https://api.bitget.com${endpoint}`, body, {
+      headers: {
+        "ACCESS-KEY": apiKey,
+        "ACCESS-SIGN": signature,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": passphrase,
+        "Content-Type": "application/json",
+      }
+    });
+    return response.data;
+  } catch (axiosError: any) {
+    if (axiosError.response) {
+      console.error("Bitget API Error:", axiosError.response.data);
+      throw new Error(axiosError.response.data.msg || JSON.stringify(axiosError.response.data));
     }
-  });
-
-  return response.data;
+    throw axiosError;
+  }
 }
 
 // Initialize Gemini safely

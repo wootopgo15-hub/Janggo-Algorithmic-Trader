@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import { RSI, MACD } from "technicalindicators";
 import { GoogleGenAI } from "@google/genai";
@@ -14,7 +13,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+
+// Vercel already parses the body into req.body. 
+// Using express.json() in Vercel will hang the request.
+if (!process.env.VERCEL) {
+  app.use(express.json());
+}
 
 // Bitget API Credentials (Retrieved from env)
 const getBitgetCreds = () => ({
@@ -65,15 +69,22 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, amount:
   return response.data;
 }
 
-// Initialize Gemini
-const genAI = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || "",
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+// Initialize Gemini safely
+let genAI: GoogleGenAI | null = null;
+try {
+  if (process.env.GEMINI_API_KEY) {
+    genAI = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+} catch (e) {
+  console.error("Failed to initialize GoogleGenAI:", e);
+}
 
 async function fetchBitgetFuturesCandles(symbol: string = "BTCUSDT", granularity: string = "1H") {
   try {
@@ -111,7 +122,13 @@ const CACHE_DURATION = 15 * 60 * 1000; // Increased to 15 minutes to respect 20-
 
 app.post("/api/analyze", async (req, res) => {
   try {
-    const { symbol = "BTCUSDT", granularity = "1H", customData } = req.body;
+    let body = req.body || {};
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) {}
+    }
+    const symbol = body.symbol || "BTCUSDT";
+    const granularity = body.granularity || "1H";
+    const customData = body.customData;
     const cacheKey = `${symbol}_${granularity}`;
 
     // Check cache first (ignore cache if customData is provided)
@@ -171,7 +188,7 @@ app.post("/api/analyze", async (req, res) => {
     const fallbackSummary = `[지표 분석] RSI(${lastRSI.toFixed(1)})와 MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === 'HOLD' ? '관망' : decision} 포지션이 유리한 구간입니다.`;
     let analysis_summary = fallbackSummary;
 
-    if (process.env.GEMINI_API_KEY) {
+    if (genAI && process.env.GEMINI_API_KEY) {
       const prompt = `
         당신은 고급 가상화폐 선물 퀀트 투자 전문가입니다. 다음 데이터를 분석하여 매매 결정을 내렸습니다.
         
@@ -229,7 +246,11 @@ app.post("/api/analyze", async (req, res) => {
 
 app.post("/api/trade/execute", async (req, res) => {
   try {
-    const { side, symbol, amount } = req.body;
+    let body = req.body || {};
+    if (typeof body === 'string') {
+      try { body = JSON.parse(body); } catch (e) {}
+    }
+    const { side, symbol, amount } = body;
     // Map LONG/SHORT to buy/sell
     const bitgetSide = side === "LONG" ? "buy" : "sell";
     const result = await executeFuturesOrder(bitgetSide, symbol, amount);
@@ -244,6 +265,7 @@ app.post("/api/trade/execute", async (req, res) => {
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

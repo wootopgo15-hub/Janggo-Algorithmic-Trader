@@ -44,27 +44,19 @@ export default function App() {
   const effectiveApiUrl = publicUrl || window.location.origin;
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v2.8)
- * 구글 스프레드시트 -> [확장 프로그램] -> [Apps Script]에 복사하세요.
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.0)
  * 
- * ⚠️ [치명적 오류 해결: 'Unexpected token <'] 
- * 외부 서버(구글)가 이 앱의 데이터에 접근하려면 반드시 'Public' 설정이 필요합니다.
- * 1. 앱 우측 상단 [Share] 버튼 클릭
- * 2. 'Anyone with the link' 로 변경 후 [Save]
- * 3. 생성된 URL을 아래 API_URL 변수에 붙여넣으세요.
+ * [설정 방법]
+ * 1. 앱 상단 [Share] -> [Anyone with the link] (Public) 설정 후 URL 복사
+ * 2. 아래 API_URL에 복사한 주소를 붙여넣으세요.
+ * 3. 5분마다 자동 실행되도록 Apps Script 트리거를 설정하세요.
  */
 const API_URL = "${effectiveApiUrl}"; 
-
-// [설정] 본인의 비트겟 API 정보를 입력하세요
-const BITGET_API_KEY = "YOUR_API_KEY";
-const BITGET_SECRET_KEY = "YOUR_SECRET_KEY";
-const BITGET_PASSPHRASE = "YOUR_PASSPHRASE";
-
 const SYMBOL = "${symbol}"; 
-const SIZE = "${orderSize}"; // 수량
+const SIZE = "${orderSize}";
 
 function main() {
-  Logger.log("--- 분석 시작 ---");
+  Logger.log("--- 분석 프로세스 시작 ---");
   
   try {
     const options = {
@@ -78,12 +70,12 @@ function main() {
     const content = res.getContentText();
     const code = res.getResponseCode();
     
-    Logger.log("Response Code: " + code);
+    Logger.log("응답 코드: " + code);
 
-    // HTML 응답 필터링 (로그인 페이지 등)
     if (content.toLowerCase().indexOf("<!doctype") !== -1 || content.toLowerCase().indexOf("<html") !== -1) {
       Logger.log("❌ 오류: 서버가 JSON 대신 HTML을 반환했습니다.");
-      Logger.log("원인: 앱 미리보기가 닫혀있거나 세션이 만료되었습니다. 브라우저에서 앱을 새로고침한 후 다시 실행하세요.");
+      Logger.log("원인: 앱이 'Public'으로 공유되지 않았거나 세션이 만료되었습니다.");
+      Logger.log("해결: 앱 우측 상단 'Share' 버튼을 눌러 'Anyone with the link'로 설정하고 생성된 URL을 앱에 입력하세요.");
       return;
     }
 
@@ -93,7 +85,7 @@ function main() {
     }
 
     const data = JSON.parse(content);
-    Logger.log("✅ AI 분석 완료: " + data.decision);
+    Logger.log("✅ 신호 분석: " + data.decision + " (" + data.analysis_summary + ")");
 
     if (data.decision === "LONG" || data.decision === "SHORT") {
       const tradeRes = UrlFetchApp.fetch(API_URL + "/api/trade/execute", {
@@ -106,16 +98,22 @@ function main() {
         }),
         muteHttpExceptions: true
       });
-      Logger.log("주문 결과: " + tradeRes.getContentText());
+      Logger.log("주문 실행 내역: " + tradeRes.getContentText());
     }
     
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = spreadsheet.getSheetByName("TradeLogs");
+    if (!sheet) {
+      sheet = spreadsheet.insertSheet("TradeLogs");
+      sheet.appendRow(["Timestamp", "Symbol", "Decision", "Analysis"]);
+    }
     sheet.appendRow([new Date(), SYMBOL, data.decision, data.analysis_summary]);
     
   } catch (e) {
-    Logger.log("❌ 실행 중 치명적 오류: " + e.toString());
+    Logger.log("❌ 실행 오류: " + e.toString());
   }
-}`;
+}
+`;
 
   const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false) => {
     try {
@@ -143,6 +141,13 @@ function main() {
       return false;
     }
   };
+
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const performAnalysis = async () => {
     setLoading(true);
@@ -212,15 +217,22 @@ function main() {
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">Crypto Quant Expert</h1>
-              <p className="text-xs text-slate-500 font-mono flex items-center gap-2">
-                DETERMINISTIC_SIGNAL_ENDPOINT_V1
-                {isAutoTrade && (
-                  <span className="flex items-center gap-1 text-emerald-500">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    AUTOTRADE_ON
+              <div className="flex items-center gap-3 mt-0.5">
+                <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    LIVE_SYSTEM
                   </span>
-                )}
-              </p>
+                  <span className="text-[#30363d]">|</span>
+                  <span>UTC: {currentTime.toISOString().split('T')[1].split('.')[0]}</span>
+                  {isAutoTrade && (
+                    <span className="flex items-center gap-1 text-blue-500 font-bold">
+                      <span className="text-[#30363d]">|</span>
+                      AUTOTRADE_ON
+                    </span>
+                  )}
+                </p>
+              </div>
             </div>
           </div>
           
@@ -550,15 +562,17 @@ function main() {
                    <div className="space-y-4">
                      <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg space-y-2">
                         <p className="text-[10px] text-blue-400 font-bold flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" /> 필수 설정 (중요)
+                          <AlertCircle className="w-3 h-3" /> 필수 설정 안내
                         </p>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                          외부 스크립트에서 접속하려면 앱이 <strong>Public</strong> 상태여야 합니다. 상단 <strong>Share</strong> 버튼을 눌러 공개 설정을 완료하세요.
+                          1. 위쪽 <strong>Share</strong> 클릭<br/>
+                          2. <strong>Anyone with link</strong>로 변경<br/>
+                          3. 생성된 주소를 아래에 입력하세요.
                         </p>
                      </div>
 
                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-slate-500 font-mono uppercase">Shared App URL (공개 주소)</label>
+                        <label className="text-[10px] text-slate-500 font-mono uppercase">Shared URL (공개 주소)</label>
                         <input 
                           type="text"
                           placeholder="https://ais-share-..."
@@ -566,16 +580,36 @@ function main() {
                           onChange={(e) => setPublicUrl(e.target.value)}
                           className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
-                        <p className="text-[9px] text-slate-600">공개 주소를 넣으면 스크립트 코드가 자동 수정됩니다.</p>
                      </div>
 
-                     <button 
-                       onClick={() => setShowScript(true)}
-                       className="w-full py-2 bg-blue-600 border border-blue-500 rounded-lg text-xs font-mono text-white hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
-                     >
-                       <ExternalLink className="w-3 h-3" />
-                       연동 코드 보기
-                     </button>
+                     <div className="grid grid-cols-2 gap-2">
+                       <button 
+                         onClick={async () => {
+                           if (!publicUrl) return alert("공개 주소를 먼저 입력하세요.");
+                           try {
+                             const res = await fetch(publicUrl + "/api/analyze", { method: "POST" });
+                             const text = await res.text();
+                             if (text.includes("<!doctype") || text.includes("<html")) {
+                               alert("❌ 오류: 주소는 맞지만 여전히 HTML을 반환합니다. 'Anyone with link' 설정이 맞는지 확인하세요.");
+                             } else {
+                               alert("✅ 성공: API가 정상적으로 JSON을 반환합니다!");
+                             }
+                           } catch (e) {
+                             alert("❌ 연결 실패: 주소를 확인하거나 앱이 서버에서 실행 중인지 확인하세요.");
+                           }
+                         }}
+                         className="py-2 bg-[#21262d] border border-[#30363d] rounded-lg text-[10px] font-mono text-slate-400 hover:bg-[#30363d] transition-all"
+                       >
+                         TEST_CONNECT
+                       </button>
+                       <button 
+                         onClick={() => setShowScript(true)}
+                         disabled={!publicUrl}
+                         className="py-2 bg-blue-600 border border-blue-500 rounded-lg text-[10px] font-mono text-white hover:bg-blue-700 transition-all disabled:opacity-50"
+                       >
+                         COPY_SCRIPT
+                       </button>
+                     </div>
                    </div>
                 </div>
               </div>

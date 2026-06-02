@@ -45,11 +45,13 @@ export default function App() {
   const [stats, setStats] = useState(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_stats");
-      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
     } catch {
-      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
     }
   });
+
+  const [coinStats, setCoinStats] = useState<Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }>>({});
 
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
@@ -63,7 +65,7 @@ export default function App() {
   const [showScript, setShowScript] = useState(false);
   const [customUrl, setCustomUrl] = useState("https://janggo-algorithmic-trader.vercel.app");
   
-  const lastSignalRef = useRef<Decision>("HOLD");
+  const lastSignalRef = useRef<Record<string, Decision>>({});
 
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
@@ -252,12 +254,17 @@ function main() {
       setAnalysis(data);
 
       // Auto Trading Logic
-      if (isAutoTrade && data.decision !== lastSignalRef.current) {
+      const currentCacheKey = `${symbol}_${granularity}`;
+      const previousDecision = lastSignalRef.current[currentCacheKey];
+      
+      if (isAutoTrade && previousDecision !== undefined && data.decision !== previousDecision) {
         if (data.decision !== "HOLD") {
           executeTrade(data.decision, orderSize, true);
         }
-        lastSignalRef.current = data.decision;
       }
+      
+      // Update ref anyway so it tracks properly
+      lastSignalRef.current[currentCacheKey] = data.decision;
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -311,10 +318,36 @@ function main() {
       }
     };
 
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch(effectiveApiUrl + "/api/trade/history");
+        if (res.ok) {
+          const data = await res.json();
+          const grouped: Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }> = {};
+          
+          if (Array.isArray(data)) {
+            data.forEach((item: any) => {
+              const sym = item.symbol;
+              const profit = parseFloat(item.netProfit || item.achievedProfits || item.totalProfits || "0");
+              if (!grouped[sym]) grouped[sym] = { winCount: 0, lossCount: 0, totalProfit: 0, trades: 0 };
+              grouped[sym].trades++;
+              grouped[sym].totalProfit += profit;
+              if (profit > 0) grouped[sym].winCount++;
+              if (profit < 0) grouped[sym].lossCount++;
+            });
+            setCoinStats(grouped);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch history", e);
+      }
+    };
+
     if (isAutoTrade) {
       balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
     }
     fetchBalance(); // Always fetch on mount or when dependencies change
+    fetchHistory();
     return () => clearInterval(balanceInterval);
   }, [isAutoTrade, effectiveApiUrl]);
 
@@ -848,6 +881,32 @@ function main() {
                       </div>
                     </div>
                  </div>
+
+                 {Object.keys(coinStats).length > 0 && (
+                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-4 shrink-0">
+                      <h3 className="text-[11px] text-slate-500 font-mono uppercase mb-3 px-2">Performance by Coin</h3>
+                      <div className="space-y-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                        {Object.entries(coinStats).map(([sym, cStats]) => {
+                           const wRate = cStats.winCount + cStats.lossCount > 0 
+                             ? ((cStats.winCount / (cStats.winCount + cStats.lossCount)) * 100).toFixed(0)
+                             : "0";
+                           return (
+                             <div key={sym} className="flex justify-between items-center text-sm py-1.5 border-b border-[#30363d]/50 last:border-0 px-2 flex-wrap">
+                               <span className="font-mono text-slate-300 font-bold">{sym}</span>
+                               <div className="flex gap-4 items-center">
+                                 <span className={cn("font-mono font-bold w-16 text-right", cStats.totalProfit >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                                   {cStats.totalProfit > 0 ? "+" : ""}{cStats.totalProfit.toFixed(2)}
+                                 </span>
+                                 <span className="font-mono text-[10px] w-24 text-right text-slate-400 uppercase">
+                                   {wRate}% ({cStats.trades}T)
+                                 </span>
+                               </div>
+                             </div>
+                           );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
                    <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">

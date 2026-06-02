@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -29,6 +29,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConfigured, setIsConfigured] = useState<boolean | null>(null);
   
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
@@ -70,7 +71,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.7)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.8)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -281,6 +282,18 @@ function main() {
   useEffect(() => {
     let balanceInterval: ReturnType<typeof setInterval>;
     
+    const checkConfig = async () => {
+      try {
+        const res = await fetch(effectiveApiUrl + "/api/trade/status");
+        if (res.ok) {
+          const data = await res.json();
+          setIsConfigured(data.isConfigured);
+        }
+      } catch(e) {
+        console.error("Failed to check status", e);
+      }
+    };
+
     const fetchBalance = async () => {
       try {
         const res = await fetch(effectiveApiUrl + "/api/trade/balance");
@@ -335,6 +348,7 @@ function main() {
     if (isAutoTrade) {
       balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
     }
+    checkConfig();
     fetchBalance(); // Always fetch on mount or when dependencies change
     fetchHistory();
     return () => clearInterval(balanceInterval);
@@ -377,7 +391,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.7</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.8</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">

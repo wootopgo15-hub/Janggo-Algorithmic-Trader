@@ -41,6 +41,11 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const { apiKey, passphrase } = getBitgetCreds();
   if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing in environment");
 
+  if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
+    console.log(`[MOCK TRADE] ${side} ${symbol} ${usdtAmount} USDT`);
+    return { code: "00000", msg: "success", data: { orderId: `mock_order_${Date.now()}` } };
+  }
+
   // 1. Get contract precision
   const contractsRes = await axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES');
   const contract = contractsRes.data.data.find((c: any) => c.symbol === symbol);
@@ -328,10 +333,23 @@ app.post("/api/analyze", async (req, res) => {
   }
 });
 
+app.get("/api/trade/status", (req, res) => {
+  const { apiKey } = getBitgetCreds();
+  const isDummy = apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424";
+  res.json({ isConfigured: !isDummy });
+});
+
 app.get("/api/trade/balance", async (req, res) => {
   try {
     const { apiKey, passphrase } = getBitgetCreds();
     if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
+
+    if (apiKey === "bg_c0bb357a72c3fb92fd9b5cb49de3c424") {
+      return res.json({
+        equity: 10000,
+        unrealizedPL: 15.5
+      });
+    }
 
     const endpoint = "/api/v2/mix/account/accounts?productType=USDT-FUTURES";
     const timestamp = Date.now().toString();

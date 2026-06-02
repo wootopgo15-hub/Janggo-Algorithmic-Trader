@@ -105,6 +105,14 @@ function main() {
       return;
     }
 
+    if (code === 500) {
+      Logger.log("❌ 오류 500: 서버 내부 오류가 발생했습니다.");
+      Logger.log("원인: Vercel 서버 재배포가 안 되었거나, 앱 내부 API 환경변수가 올바르지 않습니다.");
+      Logger.log("해결: 우측 상단 Settings에서 [Deploy to Vercel]을 다시 실행하여 최신 코드를 배포해주세요.");
+      Logger.log("상세 에러: " + content.substring(0, 50));
+      return;
+    }
+
     if (content.toLowerCase().indexOf("<!doctype") !== -1 || content.toLowerCase().indexOf("<html") !== -1) {
       Logger.log("❌ 오류: 서버가 JSON 대신 HTML을 반환했습니다.");
       Logger.log("원인: 주소가 부정확하거나 서버 상태가 올바르지 않습니다.");

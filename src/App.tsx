@@ -53,6 +53,7 @@ export default function App() {
   });
 
   const [historyList, setHistoryList] = useState<any[]>([]);
+  const [positionList, setPositionList] = useState<any[]>([]);
 
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
@@ -345,12 +346,28 @@ function main() {
       }
     };
 
+    const fetchPositions = async () => {
+      try {
+        const res = await fetch(effectiveApiUrl + "/api/trade/positions");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setPositionList(data);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch positions", e);
+      }
+    };
+
     if (isAutoTrade) {
       balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
+      setInterval(fetchPositions, 30000); // 30 seconds
     }
     checkConfig();
     fetchBalance(); // Always fetch on mount or when dependencies change
     fetchHistory();
+    fetchPositions();
     return () => clearInterval(balanceInterval);
   }, [isAutoTrade, effectiveApiUrl]);
 
@@ -887,6 +904,53 @@ function main() {
 
 
 
+                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-[300px]">
+                   <div className="flex items-center justify-between mb-6">
+                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <BarChart2 className="w-4 h-4 text-slate-500" />
+                        Current Positions (Open Trades)
+                     </h3>
+                   </div>
+                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                     {positionList.length > 0 ? (
+                       positionList.map((item, idx) => {
+                         const unrealizedPL = parseFloat(item.unrealizedPL || "0");
+                         const isWin = unrealizedPL > 0;
+                         const isLoss = unrealizedPL < 0;
+                         const side = (item.holdSide || "").toUpperCase();
+                         return (
+                           <div key={idx} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
+                              <div className="flex items-center gap-4">
+                                 <div className={cn("p-2 rounded-lg", side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
+                                    {side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                                 </div>
+                                 <div>
+                                    <div className="text-sm font-bold flex items-center gap-2">
+                                       {item.symbol}
+                                       <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono border", side === "LONG" ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : "bg-rose-500/10 text-rose-500 border-rose-500/20")}>
+                                          {item.leverage}x {side}
+                                       </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                       Size: {item.total} {item.symbol.replace("USDT","")}
+                                    </div>
+                                 </div>
+                              </div>
+                              <div className={cn("text-sm font-bold font-mono transition-all", isWin ? "text-emerald-500" : isLoss ? "text-rose-500" : "text-slate-500")}>
+                                 {isWin ? "+" : ""}{unrealizedPL.toFixed(2)} USDT
+                              </div>
+                           </div>
+                         );
+                       })
+                     ) : (
+                       <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50 pt-10">
+                          <BarChart2 className="w-12 h-12 mb-2" />
+                          <p className="text-sm">No open positions</p>
+                       </div>
+                     )}
+                   </div>
+                 </div>
+
                   <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
                    <div className="flex items-center justify-between mb-6">
                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -925,14 +989,31 @@ function main() {
                            </div>
                          );
                        })
-                     ) : logs.length === 0 ? (
+                     ) : (
                      <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
                         <History className="w-12 h-12 mb-2" />
                         <p className="text-sm">No purchase history found</p>
                      </div>
+                     )}
+                   </div>
+                 </div>
+
+                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-[300px]">
+                   <div className="flex items-center justify-between mb-6">
+                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <Zap className="w-4 h-4 text-slate-500" />
+                        Execution History
+                     </h3>
+                   </div>
+                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                     {logs.length === 0 ? (
+                     <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
+                        <Zap className="w-12 h-12 mb-2" />
+                        <p className="text-sm">No trades executed yet</p>
+                     </div>
                    ) : (
                      logs.map((log) => (
-                       <div key={log.id} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
+                       <div key={log.id} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl transition-all">
                           <div className="flex items-center gap-4">
                              <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
                                 {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
@@ -948,9 +1029,6 @@ function main() {
                                    {log.timestamp} • {log.amount} USDT • {log.reason || "Executed by Expert Bot"}
                                 </div>
                              </div>
-                          </div>
-                          <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
-                             ID_{log.id}
                           </div>
                        </div>
                      ))

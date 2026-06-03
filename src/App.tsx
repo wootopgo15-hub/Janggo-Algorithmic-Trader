@@ -100,6 +100,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">("analysis");
   const [analysisView, setAnalysisView] = useState<"indicators" | "live">("indicators");
   const [showScript, setShowScript] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
   const [customUrl, setCustomUrl] = useState("https://janggo-algorithmic-trader.vercel.app");
   
   useEffect(() => {
@@ -1011,10 +1014,72 @@ function main() {
                   </div>
                 </div>
 
+                {!showGuide ? (
+                  <div className="flex justify-end pt-2">
+                    {showPasswordPrompt ? (
+                      <div className="flex items-center gap-2 bg-[#161b22] border border-[#30363d] rounded-2xl p-1.5 pl-3">
+                        <input
+                          type="password"
+                          value={passwordInput}
+                          onChange={(e) => setPasswordInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              if (passwordInput === "642264") {
+                                setShowGuide(true);
+                                setShowPasswordPrompt(false);
+                                setPasswordInput("");
+                              } else {
+                                alert("비밀번호가 틀렸습니다.");
+                              }
+                            }
+                          }}
+                          placeholder="비밀번호..."
+                          className="bg-transparent border-none outline-none text-xs text-slate-300 w-24 font-mono placeholder:text-slate-600"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => {
+                            if (passwordInput === "642264") {
+                              setShowGuide(true);
+                              setShowPasswordPrompt(false);
+                              setPasswordInput("");
+                            } else {
+                              alert("비밀번호가 틀렸습니다.");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-blue-600 text-white text-[10px] rounded-xl hover:bg-blue-700 transition-colors"
+                        >
+                          확인
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowPasswordPrompt(false);
+                            setPasswordInput("");
+                          }}
+                          className="px-3 py-1.5 bg-[#30363d] text-slate-300 text-[10px] rounded-xl hover:bg-slate-700 transition-colors"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={() => setShowPasswordPrompt(true)}
+                        className="p-3 text-slate-500 hover:text-white hover:bg-[#30363d] rounded-2xl transition-all border border-[#30363d] bg-[#161b22]"
+                      >
+                        <Settings className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+                ) : (
                 <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6">
-                   <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2 uppercase tracking-tighter">
-                     <Settings className="w-4 h-4 text-slate-500" />
-                     Apps Script 연동 가이드
+                   <h3 className="text-sm font-bold text-white mb-4 flex items-center justify-between gap-2 uppercase tracking-tighter">
+                     <div className="flex items-center gap-2">
+                       <Settings className="w-4 h-4 text-slate-500" />
+                       Apps Script 연동 가이드
+                     </div>
+                     <button onClick={() => setShowGuide(false)} className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-[#30363d] transition-all">
+                       <Minus className="w-4 h-4" />
+                     </button>
                    </h3>
                    <div className="space-y-4">
                      <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg space-y-2">
@@ -1071,6 +1136,7 @@ function main() {
                      </div>
                    </div>
                 </div>
+                )}
               </div>
 
                {/* Apps Script Modal */}

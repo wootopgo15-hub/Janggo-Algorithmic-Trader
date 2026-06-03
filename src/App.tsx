@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -282,6 +282,11 @@ function main() {
          <span className="text-rose-500/70">S: {shortTarget.toFixed(2)}</span>
       </div>
     );
+  };
+
+  const deleteLog = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    setLogs(prev => prev.filter(log => log.id !== id));
   };
 
   const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false, customTp?: string, customSl?: string) => {
@@ -1026,8 +1031,9 @@ function main() {
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 relative">
                     <button 
                       onClick={() => setStats({ winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 })}
-                      className="absolute top-4 right-4 text-[10px] text-slate-500 hover:text-white transition-colors uppercase font-mono"
+                      className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-[10px] text-rose-500 hover:bg-rose-500/20 transition-colors uppercase font-mono border border-rose-500/20"
                     >
+                      <RefreshCw className="w-3 h-3" />
                       Reset Stats
                     </button>
                     <div className="grid grid-cols-3 gap-4">
@@ -1095,8 +1101,17 @@ function main() {
                                    </div>
                                 </div>
                               </div>
-                              <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
-                                 ID_{log.id}
+                              <div className="flex items-center gap-3">
+                                 <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
+                                    ID_{log.id}
+                                 </div>
+                                 <button 
+                                   onClick={(e) => deleteLog(e, log.id)}
+                                   className="text-slate-600 hover:text-rose-500 transition-colors p-1 rounded-md hover:bg-rose-500/10"
+                                   title="Delete log"
+                                 >
+                                   <Trash2 className="w-3 h-3" />
+                                 </button>
                               </div>
                           </div>
                           
@@ -1109,10 +1124,16 @@ function main() {
                              <div className="flex flex-col">
                                 <span className="text-[10px] text-emerald-500/70 uppercase font-mono mb-1">Take Profit {log.takeProfit ? `(+${log.takeProfit}%)` : ""}</span>
                                 <span className="text-sm font-bold text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "Not Set"}</span>
+                                {log.amount && log.takeProfit && log.status === "SUCCESS" && (
+                                  <span className="text-[10px] text-emerald-500 mt-1">Est. +${(parseFloat(log.amount) * parseFloat(log.takeProfit) / 100).toFixed(2)} USDT</span>
+                                )}
                              </div>
                              <div className="flex flex-col">
                                 <span className="text-[10px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss {log.stopLoss ? `(-${log.stopLoss}%)` : ""}</span>
                                 <span className="text-sm font-bold text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "Not Set"}</span>
+                                {log.amount && log.stopLoss && log.status === "SUCCESS" && (
+                                  <span className="text-[10px] text-rose-500 mt-1">Est. -${(parseFloat(log.amount) * parseFloat(log.stopLoss) / 100).toFixed(2)} USDT</span>
+                                )}
                              </div>
                           </div>
                           

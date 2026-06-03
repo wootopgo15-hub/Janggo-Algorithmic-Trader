@@ -108,7 +108,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
     tradeSide: "open", // open or close
     orderType: "limit", // <--- CHANGED TO LIMIT TO SAVE FEES
     price: formattedEntryPrice, // <--- Added Limit Price
-    ...(presetTakeProfitPrice ? { presetTakeProfitPrice } : {}),
+    ...(presetTakeProfitPrice ? { presetTakeProfitPrice, presetStopSurplusPrice: presetTakeProfitPrice } : {}),
     ...(presetStopLossPrice ? { presetStopLossPrice } : {})
   };
 

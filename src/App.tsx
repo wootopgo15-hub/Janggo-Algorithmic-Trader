@@ -206,6 +206,33 @@ function main() {
 }
 `;
 
+  const currentPrice = analysis?.lastPrices?.[analysis.lastPrices.length - 1];
+
+  const renderTargetPreview = (pctStr: string, isSl: boolean, side?: "LONG" | "SHORT") => {
+    if (!currentPrice || !pctStr) return null;
+    const pct = parseFloat(pctStr);
+    if (isNaN(pct) || pct <= 0) return null;
+    
+    const longTarget = isSl ? currentPrice * (1 - pct/100) : currentPrice * (1 + pct/100);
+    const shortTarget = isSl ? currentPrice * (1 + pct/100) : currentPrice * (1 - pct/100);
+    
+    if (side) {
+      const target = side === "LONG" ? longTarget : shortTarget;
+      return (
+        <div className="text-[10px] text-slate-500 mt-1 font-mono">
+           <span className={side === "LONG" ? "text-emerald-500/70" : "text-rose-500/70"}>Target: {target.toFixed(2)} USDT</span>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+         <span className="text-emerald-500/70">L: {longTarget.toFixed(2)}</span>
+         <span className="text-rose-500/70">S: {shortTarget.toFixed(2)}</span>
+      </div>
+    );
+  };
+
   const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false, customTp?: string, customSl?: string) => {
     try {
       const activeTp = customTp ?? takeProfit;
@@ -722,6 +749,7 @@ function main() {
                             className="w-full bg-[#0d1117] border border-emerald-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             placeholder="0 (Off)"
                           />
+                          {renderTargetPreview(takeProfit, false)}
                        </div>
                        <div className="space-y-1.5">
                           <div className="flex items-center justify-between">
@@ -739,6 +767,7 @@ function main() {
                             className="w-full bg-[#0d1117] border border-rose-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-500"
                             placeholder="0 (Off)"
                           />
+                          {renderTargetPreview(stopLoss, true)}
                        </div>
                     </div>
 
@@ -1034,6 +1063,7 @@ function main() {
                         className="w-full bg-black/40 border border-emerald-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500/50"
                         placeholder="0 (Off)"
                       />
+                      {renderTargetPreview(editTakeProfit, false, editingLog.side)}
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
@@ -1044,6 +1074,7 @@ function main() {
                         className="w-full bg-black/40 border border-rose-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500/50"
                         placeholder="0 (Off)"
                       />
+                      {renderTargetPreview(editStopLoss, true, editingLog.side)}
                     </div>
                   </div>
                   

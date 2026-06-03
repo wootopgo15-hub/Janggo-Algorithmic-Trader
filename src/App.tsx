@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { TrendingUp, TrendingDown, Minus, RefreshCw, AlertCircle, BarChart2, Zap, Settings, Shield, History, Play, Square, Copy, ExternalLink, Info, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
@@ -334,7 +334,7 @@ function main() {
         side,
         symbol,
         amount,
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: new Date().toISOString(),
         status: response.ok ? "SUCCESS" : "FAILED",
         reason: data.error,
         takeProfit: activeTp,
@@ -399,106 +399,109 @@ function main() {
     }
   };
 
+  const performAnalysisRef = useRef(performAnalysis);
+  performAnalysisRef.current = performAnalysis;
+
   useEffect(() => {
-    performAnalysis();
-    const interval = setInterval(performAnalysis, 15 * 1000); 
+    performAnalysisRef.current();
+    const interval = setInterval(() => performAnalysisRef.current(), 15 * 1000); 
     return () => clearInterval(interval);
   }, [isAutoTrade, symbol, granularity]);
 
-  useEffect(() => {
-    let balanceInterval: ReturnType<typeof setInterval>;
-    
-    const fetchBalance = async () => {
-      try {
-        const headers = {
-          ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
-          ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
-          ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
-        };
+  const fetchBalanceRef = useRef<() => void>();
 
-        const res = await fetch(effectiveApiUrl + "/api/trade/balance", { headers });
-        if (res.ok) {
-          const data = await res.json();
-          setStats((prev: any) => ({
-            ...prev,
-            initialEquity: prev.initialEquity === null ? data.equity : prev.initialEquity,
-            currentEquity: data.equity,
-            unrealizedPL: data.unrealizedPL
-          }));
-        }
+  fetchBalanceRef.current = async () => {
+    try {
+      const headers = {
+        ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+        ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+        ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+      };
 
-        // Fetch closed positions history to update real win rate
-        const histRes = await fetch(effectiveApiUrl + "/api/trade/history", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...headers },
-          body: JSON.stringify({ symbol })
-        });
-
-        if (histRes.ok) {
-          const rawHistData = await histRes.json();
-          const histData = Array.isArray(rawHistData) ? rawHistData : (rawHistData?.list || []);
-          
-          if (Array.isArray(histData)) {
-             let newLogsToAdd: TradeLog[] = [];
-             
-             setProcessedHistoryIds(prevProcessed => {
-                let newProcessed = [...prevProcessed];
-                let addedWins = 0;
-                let addedLosses = 0;
-                let addedProfit = 0;
-                let hasNew = false;
-
-                histData.forEach((pos: any) => {
-                  if (pos.positionId && !newProcessed.includes(pos.positionId)) {
-                     newProcessed.push(pos.positionId);
-                     const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
-                     if (pnlVal > 0) addedWins++;
-                     else if (pnlVal < 0) addedLosses++;
-                     addedProfit += pnlVal;
-                     hasNew = true;
-                     
-                     newLogsToAdd.push({
-                        id: pos.positionId + "_close",
-                        side: "CLOSE",
-                        symbol: pos.symbol || symbol,
-                        amount: pos.closeTotalPos || "0",
-                        timestamp: new Date().toISOString(),
-                        status: "SUCCESS",
-                        pnl: pnlVal.toFixed(2),
-                        isClose: true,
-                        entryPrice: parseFloat(pos.openAvgPrice || "0"),
-                        tpPrice: pos.closeAvgPrice
-                     });
-                  }
-                });
-
-                if (hasNew) {
-                  setStats((prevParams: any) => ({
-                    ...prevParams,
-                    winCount: prevParams.winCount + addedWins,
-                    lossCount: prevParams.lossCount + addedLosses,
-                    totalProfit: prevParams.totalProfit + addedProfit
-                  }));
-                }
-                return newProcessed;
-             });
-             
-             if (newLogsToAdd.length > 0) {
-               setLogs(prev => [...newLogsToAdd, ...prev].slice(0, 50));
-             }
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch balance/history", e);
+      const res = await fetch(effectiveApiUrl + "/api/trade/balance", { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setStats((prev: any) => ({
+          ...prev,
+          initialEquity: prev.initialEquity === null ? data.equity : prev.initialEquity,
+          currentEquity: data.equity,
+          unrealizedPL: data.unrealizedPL
+        }));
       }
-    };
 
-    if (isAutoTrade) {
-      balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
+      // Fetch closed positions history to update real win rate
+      const histRes = await fetch(effectiveApiUrl + "/api/trade/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ symbol })
+      });
+
+      if (histRes.ok) {
+        const rawHistData = await histRes.json();
+        const histData = Array.isArray(rawHistData) ? rawHistData : (rawHistData?.list || []);
+        
+        if (Array.isArray(histData)) {
+           let newLogsToAdd: TradeLog[] = [];
+           
+           setProcessedHistoryIds(prevProcessed => {
+              let newProcessed = [...prevProcessed];
+              let addedWins = 0;
+              let addedLosses = 0;
+              let addedProfit = 0;
+              let hasNew = false;
+
+              histData.forEach((pos: any) => {
+                if (pos.positionId && !newProcessed.includes(pos.positionId)) {
+                   newProcessed.push(pos.positionId);
+                   const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
+                   if (pnlVal > 0) addedWins++;
+                   else if (pnlVal < 0) addedLosses++;
+                   addedProfit += pnlVal;
+                   hasNew = true;
+                   
+                   newLogsToAdd.push({
+                      id: pos.positionId + "_close",
+                      side: "CLOSE",
+                      symbol: pos.symbol || symbol,
+                      amount: pos.closeTotalPos || "0",
+                      timestamp: pos.uTime || pos.cTime ? new Date(parseInt(pos.uTime || pos.cTime)).toISOString() : new Date().toISOString(),
+                      status: "SUCCESS",
+                      pnl: pnlVal.toFixed(2),
+                      isClose: true,
+                      entryPrice: parseFloat(pos.openAvgPrice || "0"),
+                      tpPrice: pos.closeAvgPrice
+                   });
+                }
+              });
+
+              if (hasNew) {
+                setStats((prevParams: any) => ({
+                  ...prevParams,
+                  winCount: prevParams.winCount + addedWins,
+                  lossCount: prevParams.lossCount + addedLosses,
+                  totalProfit: prevParams.totalProfit + addedProfit
+                }));
+              }
+              return newProcessed;
+           });
+           
+           if (newLogsToAdd.length > 0) {
+             setLogs(prev => [...newLogsToAdd, ...prev].slice(0, 50));
+           }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch balance/history", e);
     }
-    fetchBalance(); // Always fetch on mount or when dependencies change
+  };
+
+  useEffect(() => {
+    if (fetchBalanceRef.current) fetchBalanceRef.current();
+    const balanceInterval = setInterval(() => {
+      if (fetchBalanceRef.current) fetchBalanceRef.current();
+    }, 15000); // Poll every 15s regardless of auto-trade
     return () => clearInterval(balanceInterval);
-  }, [isAutoTrade, effectiveApiUrl]);
+  }, []); // Empty since ref covers state 
 
   const getStatusColor = (decision: Decision) => {
     switch (decision) {
@@ -524,6 +527,28 @@ function main() {
     signal: analysis.indicators.macd[i]?.signal || 0,
     histogram: analysis.indicators.macd[i]?.histogram || 0,
   })) : [];
+
+  const uiStats = useMemo(() => {
+    let winCount = 0;
+    let lossCount = 0;
+    let realizedPnl = 0;
+
+    logs.forEach(log => {
+      if (log.isClose && log.pnl) {
+        const p = parseFloat(log.pnl);
+        if (p > 0) winCount++;
+        else if (p < 0) lossCount++;
+        realizedPnl += p;
+      }
+    });
+
+    const totalTrades = logs.filter(log => !log.isClose && log.status === "SUCCESS").length;
+    let winRate = "0.0";
+    if (winCount + lossCount > 0) {
+      winRate = ((winCount / (winCount + lossCount)) * 100).toFixed(1);
+    }
+    return { winCount, lossCount, realizedPnl, totalTrades, winRate };
+  }, [logs]);
 
   return (
     <div className="min-h-screen bg-[#0a0c10] text-slate-200 font-sans p-4 md:p-8">
@@ -1086,7 +1111,7 @@ function main() {
                  {/* Stats Board */}
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 relative">
                     <button 
-                      onClick={() => setStats({ winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 })}
+                      onClick={() => setLogs([])}
                       className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-[10px] text-rose-500 hover:bg-rose-500/20 transition-colors uppercase font-mono border border-rose-500/20"
                     >
                       <RefreshCw className="w-3 h-3" />
@@ -1101,13 +1126,13 @@ function main() {
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-mono uppercase">Total Trades</span>
-                        <span className="text-xl font-bold text-white font-mono">{stats.winCount + stats.lossCount + (logs.length > 0 ? logs.length : 0)}</span>
+                        <span className="text-xl font-bold text-white font-mono">{uiStats.totalTrades}</span>
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-mono uppercase">Profit / Loss (USDT)</span>
                         <div className="flex items-baseline gap-2">
-                          <span className={cn("text-xl font-bold font-mono", stats.totalProfit >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                            {stats.totalProfit > 0 ? "+" : ""}{stats.totalProfit.toFixed(2)}
+                          <span className={cn("text-xl font-bold font-mono", uiStats.realizedPnl >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                            {uiStats.realizedPnl > 0 ? "+" : ""}{uiStats.realizedPnl.toFixed(2)}
                           </span>
                           <span className={cn("text-[10px] font-mono", stats.unrealizedPL >= 0 ? "text-emerald-500/70" : "text-rose-500/70")}>
                              (Open: {stats.unrealizedPL > 0 ? "+" : ""}{(stats.unrealizedPL || 0).toFixed(2)})
@@ -1117,9 +1142,7 @@ function main() {
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-mono uppercase">Win Rate</span>
                         <span className="text-xl font-bold text-white font-mono">
-                           {stats.winCount + stats.lossCount > 0 
-                             ? ((stats.winCount / (stats.winCount + stats.lossCount)) * 100).toFixed(1)
-                             : "0.0"}%
+                           {uiStats.winRate}%
                         </span>
                       </div>
                     </div>
@@ -1159,9 +1182,15 @@ function main() {
                                       </span>
                                    </div>
                                    <div className="text-xs text-slate-500 font-mono mt-0.5">
-                                      {new Date(log.timestamp).toLocaleString(undefined, {
-                                         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
-                                      })} • {log.amount} USDT
+                                      {(() => {
+                                        try {
+                                          const d = new Date(log.timestamp);
+                                          if (isNaN(d.getTime())) return log.timestamp;
+                                          return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                                        } catch(e) {
+                                          return log.timestamp;
+                                        }
+                                      })()} • {log.amount} USDT
                                    </div>
                                 </div>
                               </div>

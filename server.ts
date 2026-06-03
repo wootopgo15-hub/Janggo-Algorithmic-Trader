@@ -47,13 +47,26 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   if (!contract) throw new Error(`Symbol ${symbol} not found on Bitget`);
   const volumePlace = parseInt(contract.volumePlace, 10);
 
-  // 2. Get current price
+  const pricePlace = parseInt(contract.pricePlace || "1", 10);
+  const priceFactor = Math.pow(10, pricePlace);
+  
+  // 2. Get current price (Use best bid/ask to enter as Limit if possible, or just markPrice)
   const tickerRes = await axios.get(`https://api.bitget.com/api/v2/mix/market/ticker?symbol=${symbol}&productType=USDT-FUTURES`);
-  const price = parseFloat(tickerRes.data.data[0].markPrice);
+  const tickerData = tickerRes.data.data[0];
+  const markPrice = parseFloat(tickerData.markPrice);
+  
+  // To enter as a maker (Limit) while wanting to execute soon, we use the best bid/ask
+  const bestBid = parseFloat(tickerData.bestBidPrice || markPrice);
+  const bestAsk = parseFloat(tickerData.bestAskPrice || markPrice);
+  
+  // If buying, we want to buy at best bid (maker) or slightly lower.
+  // If selling, we want to sell at best ask (maker) or slightly higher.
+  const entryPrice = side === "buy" ? bestBid : bestAsk;
+  const formattedEntryPrice = entryPrice.toFixed(pricePlace);
 
   // 3. Calculate size
   const requestedUsdt = parseFloat(usdtAmount);
-  let sizeNum = requestedUsdt / price;
+  let sizeNum = requestedUsdt / entryPrice;
   
   // Truncate to required decimal places
   const factor = Math.pow(10, volumePlace);
@@ -61,7 +74,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const size = sizeNum.toFixed(volumePlace);
 
   if (sizeNum < parseFloat(contract.minTradeNum)) {
-    const requiredUsdt = (parseFloat(contract.minTradeNum) * price * 1.05).toFixed(2); // 5% buffer
+    const requiredUsdt = (parseFloat(contract.minTradeNum) * entryPrice * 1.05).toFixed(2); // 5% buffer
     throw new Error(`Minimum trade size not met. Increase your order size to at least ${requiredUsdt} USDT (Bitget requires ${contract.minTradeNum} ${contract.baseCoin}).`);
   }
 
@@ -69,20 +82,18 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   const timestamp = Date.now().toString();
   
   // Calculate TP and SL prices if provided
-  const pricePlace = parseInt(contract.pricePlace || "1", 10);
-  const priceFactor = Math.pow(10, pricePlace);
   let presetTakeProfitPrice;
   let presetStopLossPrice;
 
   if (takeProfitPct && parseFloat(takeProfitPct) > 0) {
     let tpPct = parseFloat(takeProfitPct);
-    let tpTarget = side === "buy" ? price * (1 + tpPct / 100) : price * (1 - tpPct / 100);
+    let tpTarget = side === "buy" ? entryPrice * (1 + tpPct / 100) : entryPrice * (1 - tpPct / 100);
     presetTakeProfitPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
   }
 
   if (stopLossPct && parseFloat(stopLossPct) > 0) {
     let slPct = parseFloat(stopLossPct);
-    let slTarget = side === "buy" ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
+    let slTarget = side === "buy" ? entryPrice * (1 - slPct / 100) : entryPrice * (1 + slPct / 100);
     presetStopLossPrice = (Math.round(slTarget * priceFactor) / priceFactor).toFixed(pricePlace);
   }
   
@@ -95,7 +106,8 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
     size: size,   // Base coin amount
     side: side,   // buy or sell
     tradeSide: "open", // open or close
-    orderType: "market",
+    orderType: "limit", // <--- CHANGED TO LIMIT TO SAVE FEES
+    price: formattedEntryPrice, // <--- Added Limit Price
     ...(presetTakeProfitPrice ? { presetTakeProfitPrice } : {}),
     ...(presetStopLossPrice ? { presetStopLossPrice } : {})
   };
@@ -113,7 +125,12 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
         "Content-Type": "application/json",
       }
     });
-    return response.data;
+    return {
+      ...response.data,
+      entryPrice: entryPrice,
+      tpPrice: presetTakeProfitPrice,
+      slPrice: presetStopLossPrice
+    };
   } catch (axiosError: any) {
     if (axiosError.response) {
       console.error("Bitget API Error:", axiosError.response.data);
@@ -381,7 +398,8 @@ app.post("/api/trade/execute", async (req, res) => {
     if (result.code !== "00000") {
       return res.status(400).json({ error: result.msg || "Order failed" });
     }
-    res.json({ success: true, orderId: result.data.orderId });
+    // result from executeFuturesOrder should contain entryPrice
+    res.json({ success: true, orderId: result.data.orderId, entryPrice: result.entryPrice, tpPrice: result.tpPrice, slPrice: result.slPrice });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

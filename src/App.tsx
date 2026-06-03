@@ -23,6 +23,9 @@ interface TradeLog {
   reason?: string;
   takeProfit?: string;
   stopLoss?: string;
+  entryPrice?: number;
+  tpPrice?: string;
+  slPrice?: string;
 }
 
 export default function App() {
@@ -45,6 +48,7 @@ export default function App() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("janggo_bitget_apiKey") || "");
   const [secretKey, setSecretKey] = useState(() => localStorage.getItem("janggo_bitget_secretKey") || "");
   const [passphrase, setPassphrase] = useState(() => localStorage.getItem("janggo_bitget_passphrase") || "");
+  const [realtimePrice, setRealtimePrice] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem("janggo_bitget_apiKey", apiKey);
@@ -84,6 +88,52 @@ export default function App() {
   const [showScript, setShowScript] = useState(false);
   const [customUrl, setCustomUrl] = useState("https://janggo-algorithmic-trader.vercel.app");
   
+  useEffect(() => {
+    setRealtimePrice(null);
+    let ws: WebSocket | null = null;
+    let reconnectTimer: NodeJS.Timeout;
+
+    const connectWs = () => {
+      ws = new WebSocket("wss://ws.bitget.com/v2/ws/public");
+      
+      ws.onopen = () => {
+        ws?.send(JSON.stringify({
+          op: "subscribe",
+          args: [{
+            instType: "USDT-FUTURES",
+            channel: "ticker",
+            instId: symbol
+          }]
+        }));
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const res = JSON.parse(event.data);
+          if (res.action === "snapshot" && res.data && res.data[0]) {
+            setRealtimePrice(res.data[0].lastPr);
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
+      };
+
+      ws.onclose = () => {
+        reconnectTimer = setTimeout(connectWs, 3000);
+      };
+    };
+
+    connectWs();
+
+    return () => {
+      clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
+  }, [symbol]);
+
   const lastSignalRef = useRef<Record<string, Decision>>({});
 
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
@@ -208,13 +258,14 @@ function main() {
 
   const currentPrice = analysis?.lastPrices?.[analysis.lastPrices.length - 1];
 
-  const renderTargetPreview = (pctStr: string, isSl: boolean, side?: "LONG" | "SHORT") => {
-    if (!currentPrice || !pctStr) return null;
+  const renderTargetPreview = (pctStr: string, isSl: boolean, side?: "LONG" | "SHORT", basePrice?: number) => {
+    const p = basePrice || currentPrice;
+    if (!p || !pctStr) return null;
     const pct = parseFloat(pctStr);
     if (isNaN(pct) || pct <= 0) return null;
     
-    const longTarget = isSl ? currentPrice * (1 - pct/100) : currentPrice * (1 + pct/100);
-    const shortTarget = isSl ? currentPrice * (1 + pct/100) : currentPrice * (1 - pct/100);
+    const longTarget = isSl ? p * (1 - pct/100) : p * (1 + pct/100);
+    const shortTarget = isSl ? p * (1 + pct/100) : p * (1 - pct/100);
     
     if (side) {
       const target = side === "LONG" ? longTarget : shortTarget;
@@ -268,7 +319,10 @@ function main() {
         status: response.ok ? "SUCCESS" : "FAILED",
         reason: data.error,
         takeProfit: activeTp,
-        stopLoss: activeSl
+        stopLoss: activeSl,
+        entryPrice: data.entryPrice,
+        tpPrice: data.tpPrice,
+        slPrice: data.slPrice
       };
       
       setLogs(prev => [newLog, ...prev].slice(0, 50));
@@ -328,7 +382,7 @@ function main() {
 
   useEffect(() => {
     performAnalysis();
-    const interval = setInterval(performAnalysis, 5 * 60 * 1000); 
+    const interval = setInterval(performAnalysis, 15 * 1000); 
     return () => clearInterval(interval);
   }, [isAutoTrade, symbol, granularity]);
 
@@ -533,7 +587,7 @@ function main() {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <motion.div 
                       className={cn(
-                        "md:col-span-1 border rounded-2xl p-6 flex flex-col justify-center items-center text-center space-y-4 shadow-2xl transition-all duration-500",
+                        "md:col-span-1 border rounded-2xl p-6 flex flex-col justify-center items-center text-center space-y-4 shadow-xl transition-all duration-500",
                         analysis ? getStatusColor(analysis.decision) : "border-[#30363d] bg-[#161b22]"
                       )}
                     >
@@ -541,7 +595,7 @@ function main() {
                       <div className="p-4 rounded-full bg-white/5 border border-white/10">
                         {analysis ? getStatusIcon(analysis.decision) : <RefreshCw className="w-8 h-8 animate-spin opacity-20" />}
                       </div>
-                      <div className="text-4xl font-black tracking-tighter">
+                      <div className="text-3xl lg:text-4xl font-black tracking-tighter">
                         {loading ? "ANALYZING..." : (analysis?.decision || "HOLD")}
                       </div>
                     </motion.div>
@@ -721,7 +775,47 @@ function main() {
                     </div>
                   </div>
 
-                  <div className="space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center">
+                       <span className="text-xs text-slate-400 font-mono mb-1">LIVE PRICE</span>
+                       <span className="text-xl text-white font-mono font-bold flex items-center gap-1">
+                           {realtimePrice ? (
+                              <>
+                                <span className="text-sm text-emerald-500/50">$</span>
+                                <span className="text-emerald-400">{parseFloat(realtimePrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}</span>
+                              </>
+                           ) : (
+                             <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
+                           )}
+                       </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center">
+                         <span className="text-xs text-slate-400 font-mono mb-1">RSI ({granularity})</span>
+                         <span className={cn("text-lg font-mono font-bold flex items-center", analysis && (analysis.indicators.rsi[analysis.indicators.rsi.length - 1] < 30 ? "text-emerald-400" : analysis.indicators.rsi[analysis.indicators.rsi.length - 1] > 70 ? "text-rose-400" : "text-slate-200"))}>
+                             {analysis ? (
+                               analysis.indicators.rsi[analysis.indicators.rsi.length - 1].toFixed(2)
+                             ) : (
+                               <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
+                             )}
+                         </span>
+                      </div>
+                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center">
+                         <span className="text-xs text-slate-400 font-mono mb-1">MACD ({granularity})</span>
+                         <span className={cn("text-[10px] sm:text-xs font-mono font-bold flex items-center mt-1 uppercase", analysis && (
+                              analysis.indicators.macd.length >= 2 && analysis.indicators.macd[analysis.indicators.macd.length - 1]?.MACD! > analysis.indicators.macd[analysis.indicators.macd.length - 1]?.signal! ? "text-emerald-400" : "text-rose-400"
+                         ))}>
+                             {analysis ? (
+                               analysis.indicators.macd.length >= 2 ? (
+                                 analysis.indicators.macd[analysis.indicators.macd.length - 1]?.MACD! > analysis.indicators.macd[analysis.indicators.macd.length - 1]?.signal! ? "GOLDEN CROSS" : "DEAD CROSS"
+                               ) : "CALCULATING"
+                             ) : (
+                               <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
+                             )}
+                         </span>
+                      </div>
+                    </div>
+
                     <div className="space-y-1.5">
                        <label className="text-xs text-slate-500 font-mono uppercase">Order Size (USDT)</label>
                        <input 
@@ -820,13 +914,13 @@ function main() {
                     </div>
                   </div>
 
-                  <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-mono text-blue-400">
+                  <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
                        <Shield className="w-3 h-3" />
-                       AUTO-PILOT STATUS
+                       AUTO-PILOT STATUS (LIMIT ORDER)
                     </div>
                     <p className="text-[10px] text-slate-500 leading-relaxed">
-                      자동 매매는 RSI/MACD 변동 시 즉시 체결됩니다. 비트겟 API 키가 서버 설정에 등록되어 있어야 작동합니다.
+                      자동 매매는 RSI/MACD 변동 시 즉시 체결됩니다. 수수료 절감을 위해 시장가(Market)가 아닌 <b>지정가(Limit)</b>로 진입하며 최적의 호가를 계산합니다. 비트겟 API 키가 서버 설정에 등록되어 있어야 작동합니다.
                     </p>
                   </div>
                 </div>
@@ -983,26 +1077,50 @@ function main() {
                               setEditTakeProfit(log.takeProfit || "");
                               setEditStopLoss(log.stopLoss || "");
                             }}
-                            className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer">
-                          <div className="flex items-center gap-4">
-                             <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
-                                {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                            className="flex flex-col p-4 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer">
+                          <div className="flex items-center justify-between mb-3.5">
+                              <div className="flex items-center gap-3">
+                                <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
+                                   {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                                </div>
+                                <div>
+                                   <div className="text-sm font-bold flex items-center gap-2">
+                                      {log.side} {log.symbol}
+                                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono", log.status === "SUCCESS" ? "bg-emerald-500/20 text-emerald-500" : "bg-rose-500/20 text-rose-500")}>
+                                         {log.status === "SUCCESS" ? "LIMIT ORDER" : log.status}
+                                      </span>
+                                   </div>
+                                   <div className="text-xs text-slate-500 font-mono mt-0.5">
+                                      {log.timestamp} • {log.amount} USDT
+                                   </div>
+                                </div>
+                              </div>
+                              <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
+                                 ID_{log.id}
+                              </div>
+                          </div>
+                          
+                          {/* Order details grid */}
+                          <div className="grid grid-cols-3 gap-2 p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                             <div className="flex flex-col">
+                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">Limit Entry</span>
+                                <span className="text-sm font-bold text-slate-200 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
                              </div>
-                             <div>
-                                <div className="text-sm font-bold flex items-center gap-2">
-                                   {log.side} {log.symbol}
-                                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono", log.status === "SUCCESS" ? "bg-emerald-500/20 text-emerald-500" : "bg-rose-500/20 text-rose-500")}>
-                                      {log.status}
-                                   </span>
-                                </div>
-                                <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                                   {log.timestamp} • {log.amount} USDT • {log.reason || "Executed by Expert Bot"}
-                                </div>
+                             <div className="flex flex-col">
+                                <span className="text-[10px] text-emerald-500/70 uppercase font-mono mb-1">Take Profit {log.takeProfit ? `(+${log.takeProfit}%)` : ""}</span>
+                                <span className="text-sm font-bold text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "Not Set"}</span>
+                             </div>
+                             <div className="flex flex-col">
+                                <span className="text-[10px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss {log.stopLoss ? `(-${log.stopLoss}%)` : ""}</span>
+                                <span className="text-sm font-bold text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "Not Set"}</span>
                              </div>
                           </div>
-                          <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
-                             ID_{log.id}
-                          </div>
+                          
+                          {(log.reason || log.status === "SUCCESS") && (
+                            <div className="mt-3 text-[10px] text-slate-500 font-mono border-t border-[#30363d]/50 pt-2 text-right">
+                               {log.reason || "Executed Limit Order by AI Expert Bot"}
+                            </div>
+                          )}
                        </div>
                      ))
                    )}
@@ -1052,6 +1170,11 @@ function main() {
                     </span>
                     <span className="text-slate-400 ml-2 font-mono">({editingLog.amount} USDT)</span>
                   </div>
+                  {editingLog.entryPrice && (
+                    <div className="text-xs text-slate-500 font-mono">
+                      Entry Price: {editingLog.entryPrice}
+                    </div>
+                  )}
                   
                   <div className="space-y-3">
                     <div className="space-y-1.5">
@@ -1063,7 +1186,7 @@ function main() {
                         className="w-full bg-black/40 border border-emerald-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500/50"
                         placeholder="0 (Off)"
                       />
-                      {renderTargetPreview(editTakeProfit, false, editingLog.side)}
+                      {renderTargetPreview(editTakeProfit, false, editingLog.side, editingLog.entryPrice)}
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
@@ -1074,7 +1197,7 @@ function main() {
                         className="w-full bg-black/40 border border-rose-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500/50"
                         placeholder="0 (Off)"
                       />
-                      {renderTargetPreview(editStopLoss, true, editingLog.side)}
+                      {renderTargetPreview(editStopLoss, true, editingLog.side, editingLog.entryPrice)}
                     </div>
                   </div>
                   

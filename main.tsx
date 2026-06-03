@@ -21,6 +21,8 @@ interface TradeLog {
   timestamp: string;
   status: "SUCCESS" | "FAILED";
   reason?: string;
+  takeProfit?: string;
+  stopLoss?: string;
 }
 
 export default function App() {
@@ -35,6 +37,25 @@ export default function App() {
   const [orderSize, setOrderSize] = useState("15");
   const [takeProfit, setTakeProfit] = useState("1");
   const [stopLoss, setStopLoss] = useState("0.5");
+  
+  const [editingLog, setEditingLog] = useState<TradeLog | null>(null);
+  const [editTakeProfit, setEditTakeProfit] = useState("");
+  const [editStopLoss, setEditStopLoss] = useState("");
+  
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("janggo_bitget_apiKey") || "");
+  const [secretKey, setSecretKey] = useState(() => localStorage.getItem("janggo_bitget_secretKey") || "");
+  const [passphrase, setPassphrase] = useState(() => localStorage.getItem("janggo_bitget_passphrase") || "");
+
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_apiKey", apiKey);
+  }, [apiKey]);
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_secretKey", secretKey);
+  }, [secretKey]);
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_passphrase", passphrase);
+  }, [passphrase]);
+
   const [logs, setLogs] = useState<TradeLog[]>(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_logs");
@@ -45,13 +66,11 @@ export default function App() {
   const [stats, setStats] = useState(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_stats");
-      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
+      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
     } catch {
-      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
+      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
     }
   });
-
-  const [coinStats, setCoinStats] = useState<Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }>>({});
 
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
@@ -70,7 +89,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.6.6)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.2)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -187,12 +206,46 @@ function main() {
 }
 `;
 
-  const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false) => {
+  const currentPrice = analysis?.lastPrices?.[analysis.lastPrices.length - 1];
+
+  const renderTargetPreview = (pctStr: string, isSl: boolean, side?: "LONG" | "SHORT") => {
+    if (!currentPrice || !pctStr) return null;
+    const pct = parseFloat(pctStr);
+    if (isNaN(pct) || pct <= 0) return null;
+    
+    const longTarget = isSl ? currentPrice * (1 - pct/100) : currentPrice * (1 + pct/100);
+    const shortTarget = isSl ? currentPrice * (1 + pct/100) : currentPrice * (1 - pct/100);
+    
+    if (side) {
+      const target = side === "LONG" ? longTarget : shortTarget;
+      return (
+        <div className="text-[10px] text-slate-500 mt-1 font-mono">
+           <span className={side === "LONG" ? "text-emerald-500/70" : "text-rose-500/70"}>Target: {target.toFixed(2)} USDT</span>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex justify-between text-[10px] text-slate-500 mt-1 font-mono">
+         <span className="text-emerald-500/70">L: {longTarget.toFixed(2)}</span>
+         <span className="text-rose-500/70">S: {shortTarget.toFixed(2)}</span>
+      </div>
+    );
+  };
+
+  const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false, customTp?: string, customSl?: string) => {
     try {
+      const activeTp = customTp ?? takeProfit;
+      const activeSl = customSl ?? stopLoss;
       const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ side, symbol, amount, takeProfit, stopLoss }),
+        headers: { 
+          "Content-Type": "application/json",
+          ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+          ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+          ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+        },
+        body: JSON.stringify({ side, symbol, amount, takeProfit: activeTp, stopLoss: activeSl }),
       });
       
       const contentType = response.headers.get("content-type");
@@ -213,7 +266,9 @@ function main() {
         amount,
         timestamp: new Date().toLocaleTimeString(),
         status: response.ok ? "SUCCESS" : "FAILED",
-        reason: data.error
+        reason: data.error,
+        takeProfit: activeTp,
+        stopLoss: activeSl
       };
       
       setLogs(prev => [newLog, ...prev].slice(0, 50));
@@ -255,15 +310,14 @@ function main() {
 
       // Auto Trading Logic
       const currentCacheKey = `${symbol}_${granularity}`;
-      const previousDecision = lastSignalRef.current[currentCacheKey];
+      const isFirstView = !(currentCacheKey in lastSignalRef.current);
+      const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
       
-      if (isAutoTrade && previousDecision !== undefined && data.decision !== previousDecision) {
-        if (data.decision !== "HOLD") {
-          executeTrade(data.decision, orderSize, true);
-        }
+      if (!isFirstView && isAutoTrade && data.decision !== "HOLD" && data.decision !== previousDecision) {
+        executeTrade(data.decision, orderSize, true);
       }
       
-      // Update ref anyway so it tracks properly
+      // Update ref anyway so it tracks properly even if auto trade is off
       lastSignalRef.current[currentCacheKey] = data.decision;
     } catch (err: any) {
       setError(err.message);
@@ -283,7 +337,13 @@ function main() {
     
     const fetchBalance = async () => {
       try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/balance");
+        const res = await fetch(effectiveApiUrl + "/api/trade/balance", {
+          headers: {
+            ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+            ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+            ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           setStats((prev: any) => {
@@ -318,36 +378,10 @@ function main() {
       }
     };
 
-    const fetchHistory = async () => {
-      try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/history");
-        if (res.ok) {
-          const data = await res.json();
-          const grouped: Record<string, { winCount: number; lossCount: number; totalProfit: number; trades: number }> = {};
-          
-          if (Array.isArray(data)) {
-            data.forEach((item: any) => {
-              const sym = item.symbol;
-              const profit = parseFloat(item.netProfit || item.achievedProfits || item.totalProfits || "0");
-              if (!grouped[sym]) grouped[sym] = { winCount: 0, lossCount: 0, totalProfit: 0, trades: 0 };
-              grouped[sym].trades++;
-              grouped[sym].totalProfit += profit;
-              if (profit > 0) grouped[sym].winCount++;
-              if (profit < 0) grouped[sym].lossCount++;
-            });
-            setCoinStats(grouped);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch history", e);
-      }
-    };
-
     if (isAutoTrade) {
       balanceInterval = setInterval(fetchBalance, 30000); // 30 seconds
     }
     fetchBalance(); // Always fetch on mount or when dependencies change
-    fetchHistory();
     return () => clearInterval(balanceInterval);
   }, [isAutoTrade, effectiveApiUrl]);
 
@@ -388,7 +422,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.6.6</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.7.2</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -700,7 +734,14 @@ function main() {
                     
                     <div className="grid grid-cols-2 gap-3 mt-4">
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono uppercase text-emerald-500/80">Take Profit (%)</label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (%)</label>
+                            <div className="flex gap-1">
+                               <button onClick={() => setTakeProfit("0.2")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">0.2%</button>
+                               <button onClick={() => setTakeProfit("0.5")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">0.5%</button>
+                               <button onClick={() => setTakeProfit("1")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">1%</button>
+                            </div>
+                          </div>
                           <input 
                             type="number"
                             value={takeProfit}
@@ -708,9 +749,17 @@ function main() {
                             className="w-full bg-[#0d1117] border border-emerald-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
                             placeholder="0 (Off)"
                           />
+                          {renderTargetPreview(takeProfit, false)}
                        </div>
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono uppercase text-rose-500/80">Stop Loss (%)</label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
+                            <div className="flex gap-1">
+                               <button onClick={() => setStopLoss("0.2")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">0.2%</button>
+                               <button onClick={() => setStopLoss("0.5")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">0.5%</button>
+                               <button onClick={() => setStopLoss("1")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">1%</button>
+                            </div>
+                          </div>
                           <input 
                             type="number"
                             value={stopLoss}
@@ -718,7 +767,39 @@ function main() {
                             className="w-full bg-[#0d1117] border border-rose-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-500"
                             placeholder="0 (Off)"
                           />
+                          {renderTargetPreview(stopLoss, true)}
                        </div>
+                    </div>
+
+                    {/* API Keys Settings */}
+                    <div className="pt-4 border-t border-[#30363d] space-y-3">
+                      <h4 className="text-xs font-bold text-slate-400 flex items-center gap-2">
+                        <Settings className="w-3 h-3" />
+                        Bitget API Settings
+                      </h4>
+                      <div className="space-y-2">
+                        <input 
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="API Key (공란 시 서버 기본값)"
+                        />
+                        <input 
+                          type="password"
+                          value={secretKey}
+                          onChange={(e) => setSecretKey(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Secret Key (공란 시 서버 기본값)"
+                        />
+                        <input 
+                          type="password"
+                          value={passphrase}
+                          onChange={(e) => setPassphrase(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Passphrase (공란 시 서버 기본값)"
+                        />
+                      </div>
                     </div>
 
                     <div className="pt-4 grid grid-cols-2 gap-3">
@@ -882,32 +963,6 @@ function main() {
                     </div>
                  </div>
 
-                 {Object.keys(coinStats).length > 0 && (
-                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-4 shrink-0">
-                      <h3 className="text-[11px] text-slate-500 font-mono uppercase mb-3 px-2">Performance by Coin</h3>
-                      <div className="space-y-1 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                        {Object.entries(coinStats).map(([sym, cStats]) => {
-                           const wRate = cStats.winCount + cStats.lossCount > 0 
-                             ? ((cStats.winCount / (cStats.winCount + cStats.lossCount)) * 100).toFixed(0)
-                             : "0";
-                           return (
-                             <div key={sym} className="flex justify-between items-center text-sm py-1.5 border-b border-[#30363d]/50 last:border-0 px-2 flex-wrap">
-                               <span className="font-mono text-slate-300 font-bold">{sym}</span>
-                               <div className="flex gap-4 items-center">
-                                 <span className={cn("font-mono font-bold w-16 text-right", cStats.totalProfit >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                                   {cStats.totalProfit > 0 ? "+" : ""}{cStats.totalProfit.toFixed(2)}
-                                 </span>
-                                 <span className="font-mono text-[10px] w-24 text-right text-slate-400 uppercase">
-                                   {wRate}% ({cStats.trades}T)
-                                 </span>
-                               </div>
-                             </div>
-                           );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
                    <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
                       <History className="w-4 h-4 text-slate-500" />
@@ -922,7 +977,13 @@ function main() {
                      </div>
                    ) : (
                      logs.map((log) => (
-                       <div key={log.id} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
+                       <div key={log.id} 
+                            onClick={() => {
+                              setEditingLog(log);
+                              setEditTakeProfit(log.takeProfit || "");
+                              setEditStopLoss(log.stopLoss || "");
+                            }}
+                            className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer">
                           <div className="flex items-center gap-4">
                              <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
                                 {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
@@ -960,6 +1021,79 @@ function main() {
              DISCLAIMER: FUTURES_QUANT_TRADING_INVOLVES_HIGH_RISK. NO_FINANCIAL_ADVICE_INTENDED.
            </p>
         </footer>
+        <AnimatePresence>
+          {editingLog && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onClick={() => setEditingLog(null)}
+            >
+              <motion.div 
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.95 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-[#0d1117] border border-[#30363d] rounded-2xl w-full max-w-sm overflow-hidden"
+              >
+                <div className="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#161b22]">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <History className="w-4 h-4 text-blue-400" />
+                    Edit & Resend Signal
+                  </h3>
+                  <button onClick={() => setEditingLog(null)} className="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="text-sm">
+                    <span className="text-slate-400 mr-2">Target:</span>
+                    <span className={cn("font-bold", editingLog.side === "LONG" ? "text-emerald-500" : "text-rose-500")}>
+                      {editingLog.side} {editingLog.symbol}
+                    </span>
+                    <span className="text-slate-400 ml-2 font-mono">({editingLog.amount} USDT)</span>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (%)</label>
+                      <input 
+                        type="number"
+                        value={editTakeProfit}
+                        onChange={(e) => setEditTakeProfit(e.target.value)}
+                        className="w-full bg-black/40 border border-emerald-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500/50"
+                        placeholder="0 (Off)"
+                      />
+                      {renderTargetPreview(editTakeProfit, false, editingLog.side)}
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
+                      <input 
+                        type="number"
+                        value={editStopLoss}
+                        onChange={(e) => setEditStopLoss(e.target.value)}
+                        className="w-full bg-black/40 border border-rose-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500/50"
+                        placeholder="0 (Off)"
+                      />
+                      {renderTargetPreview(editStopLoss, true, editingLog.side)}
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      executeTrade(editingLog.side, editingLog.amount, false, editTakeProfit, editStopLoss);
+                      setEditingLog(null);
+                    }}
+                    className="w-full mt-2 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition-all flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    Resend Signal
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </div>
 
       <style>{`

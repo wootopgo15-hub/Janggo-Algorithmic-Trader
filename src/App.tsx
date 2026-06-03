@@ -697,23 +697,23 @@ function main() {
                     
                     <div className="grid grid-cols-2 gap-3 mt-4">
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (Trigger Price) %</label>
+                          <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP Price (USDT)</label>
                           <input 
                             type="number"
                             value={takeProfit}
                             onChange={(e) => setTakeProfit(e.target.value)}
                             className="w-full bg-[#0d1117] border border-emerald-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                            placeholder="0 (Off)"
+                            placeholder="Price (Optional)"
                           />
                        </div>
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (Trigger Price) %</label>
+                          <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL Price (USDT)</label>
                           <input 
                             type="number"
                             value={stopLoss}
                             onChange={(e) => setStopLoss(e.target.value)}
                             className="w-full bg-[#0d1117] border border-rose-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-500"
-                            placeholder="0 (Off)"
+                            placeholder="Price (Optional)"
                           />
                        </div>
                     </div>

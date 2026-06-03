@@ -71,20 +71,17 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   // Calculate TP and SL prices if provided
   const pricePlace = parseInt(contract.pricePlace || "1", 10);
   const priceFactor = Math.pow(10, pricePlace);
-  const tpPct = parseFloat(takeProfitPct || "0");
-  const slPct = parseFloat(stopLossPct || "0");
-  
   let presetTakeProfitPrice;
   let presetStopLossPrice;
 
-  if (tpPct > 0) {
-    let tpTarget = side === "buy" ? price * (1 + tpPct / 100) : price * (1 - tpPct / 100);
-    presetTakeProfitPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
+  if (takeProfitPct && parseFloat(takeProfitPct) > 0) {
+    // takeProfitPct is now passed as an absolute price directly from the UI
+    presetTakeProfitPrice = (Math.round(parseFloat(takeProfitPct) * priceFactor) / priceFactor).toFixed(pricePlace);
   }
 
-  if (slPct > 0) {
-    let slTarget = side === "buy" ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
-    presetStopLossPrice = (Math.round(slTarget * priceFactor) / priceFactor).toFixed(pricePlace);
+  if (stopLossPct && parseFloat(stopLossPct) > 0) {
+    // stopLossPct is now passed as an absolute price directly from the UI
+    presetStopLossPrice = (Math.round(parseFloat(stopLossPct) * priceFactor) / priceFactor).toFixed(pricePlace);
   }
   
   // Bitget Futures Order Payload

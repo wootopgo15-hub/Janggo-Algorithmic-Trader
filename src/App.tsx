@@ -15,7 +15,7 @@ import { AnalysisResult, Decision } from "./types";
 
 interface TradeLog {
   id: string;
-  side: "LONG" | "SHORT";
+  side: "LONG" | "SHORT" | "CLOSE";
   symbol: string;
   amount: string;
   timestamp: string;
@@ -26,6 +26,8 @@ interface TradeLog {
   entryPrice?: number;
   tpPrice?: string;
   slPrice?: string;
+  pnl?: string;
+  isClose?: boolean;
 }
 
 export default function App() {
@@ -433,8 +435,12 @@ function main() {
         });
 
         if (histRes.ok) {
-          const histData = await histRes.json();
+          const rawHistData = await histRes.json();
+          const histData = Array.isArray(rawHistData) ? rawHistData : (rawHistData?.list || []);
+          
           if (Array.isArray(histData)) {
+             let newLogsToAdd: TradeLog[] = [];
+             
              setProcessedHistoryIds(prevProcessed => {
                 let newProcessed = [...prevProcessed];
                 let addedWins = 0;
@@ -445,11 +451,24 @@ function main() {
                 histData.forEach((pos: any) => {
                   if (pos.positionId && !newProcessed.includes(pos.positionId)) {
                      newProcessed.push(pos.positionId);
-                     const pnl = parseFloat(pos.netProfit || pos.pnl || "0");
-                     if (pnl > 0) addedWins++;
-                     else if (pnl < 0) addedLosses++;
-                     addedProfit += pnl;
+                     const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
+                     if (pnlVal > 0) addedWins++;
+                     else if (pnlVal < 0) addedLosses++;
+                     addedProfit += pnlVal;
                      hasNew = true;
+                     
+                     newLogsToAdd.push({
+                        id: pos.positionId + "_close",
+                        side: "CLOSE",
+                        symbol: pos.symbol || symbol,
+                        amount: pos.closeTotalPos || "0",
+                        timestamp: new Date().toISOString(),
+                        status: "SUCCESS",
+                        pnl: pnlVal.toFixed(2),
+                        isClose: true,
+                        entryPrice: parseFloat(pos.openAvgPrice || "0"),
+                        tpPrice: pos.closeAvgPrice
+                     });
                   }
                 });
 
@@ -463,6 +482,10 @@ function main() {
                 }
                 return newProcessed;
              });
+             
+             if (newLogsToAdd.length > 0) {
+               setLogs(prev => [...newLogsToAdd, ...prev].slice(0, 50));
+             }
           }
         }
       } catch (e) {
@@ -1125,18 +1148,20 @@ function main() {
                             className="flex flex-col p-4 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer">
                           <div className="flex items-center justify-between mb-3.5">
                               <div className="flex items-center gap-3">
-                                <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
-                                   {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                                <div className={cn("p-2 rounded-lg", log.isClose ? "bg-slate-500/10 text-slate-400" : log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
+                                   {log.isClose ? <History className="w-4 h-4" /> : log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                                 </div>
                                 <div>
                                    <div className="text-sm font-bold flex items-center gap-2">
-                                      {log.side} {log.symbol}
-                                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono", log.status === "SUCCESS" ? "bg-emerald-500/20 text-emerald-500" : "bg-rose-500/20 text-rose-500")}>
-                                         {log.status === "SUCCESS" ? "LIMIT ORDER" : log.status}
+                                      {log.isClose ? "CLOSED" : log.side} {log.symbol}
+                                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded uppercase font-mono", log.isClose ? "bg-slate-500/20 text-slate-400" : log.status === "SUCCESS" ? "bg-emerald-500/20 text-emerald-500" : "bg-rose-500/20 text-rose-500")}>
+                                         {log.isClose ? "REALIZED" : log.status === "SUCCESS" ? "LIMIT ORDER" : log.status}
                                       </span>
                                    </div>
                                    <div className="text-xs text-slate-500 font-mono mt-0.5">
-                                      {log.timestamp} • {log.amount} USDT
+                                      {new Date(log.timestamp).toLocaleString(undefined, {
+                                         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
+                                      })} • {log.amount} USDT
                                    </div>
                                 </div>
                               </div>
@@ -1155,30 +1180,45 @@ function main() {
                           </div>
                           
                           {/* Order details grid */}
-                          <div className="grid grid-cols-3 gap-2 p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
-                             <div className="flex flex-col">
-                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">Limit Entry</span>
-                                <span className="text-sm font-bold text-slate-200 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
-                             </div>
-                             <div className="flex flex-col">
-                                <span className="text-[10px] text-emerald-500/70 uppercase font-mono mb-1">Take Profit {log.takeProfit ? `(+${log.takeProfit}%)` : ""}</span>
-                                <span className="text-sm font-bold text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "Not Set"}</span>
-                                {log.amount && log.takeProfit && log.status === "SUCCESS" && (
-                                  <span className="text-[10px] text-emerald-500 mt-1">Est. +${(parseFloat(log.amount) * parseFloat(log.takeProfit) / 100).toFixed(2)} USDT</span>
-                                )}
-                             </div>
-                             <div className="flex flex-col">
-                                <span className="text-[10px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss {log.stopLoss ? `(-${log.stopLoss}%)` : ""}</span>
-                                <span className="text-sm font-bold text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "Not Set"}</span>
-                                {log.amount && log.stopLoss && log.status === "SUCCESS" && (
-                                  <span className="text-[10px] text-rose-500 mt-1">Est. -${(parseFloat(log.amount) * parseFloat(log.stopLoss) / 100).toFixed(2)} USDT</span>
-                                )}
-                             </div>
-                          </div>
+                          {log.isClose ? (
+                            <div className="flex justify-between items-center p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">Status</span>
+                                <span className="text-sm font-bold text-slate-200 font-mono">Position Closed</span>
+                              </div>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">Realized PnL</span>
+                                <span className={cn("text-lg font-bold font-mono", parseFloat(log.pnl || "0") >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}{log.pnl} USDT
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-3 gap-2 p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                               <div className="flex flex-col">
+                                  <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">Limit Entry</span>
+                                  <span className="text-sm font-bold text-slate-200 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
+                               </div>
+                               <div className="flex flex-col">
+                                  <span className="text-[10px] text-emerald-500/70 uppercase font-mono mb-1">Take Profit {log.takeProfit ? `(+${log.takeProfit}%)` : ""}</span>
+                                  <span className="text-sm font-bold text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "Not Set"}</span>
+                                  {log.amount && log.takeProfit && log.status === "SUCCESS" && (
+                                    <span className="text-[10px] text-emerald-500 mt-1">Est. +${(parseFloat(log.amount) * parseFloat(log.takeProfit) / 100).toFixed(2)} USDT</span>
+                                  )}
+                               </div>
+                               <div className="flex flex-col">
+                                  <span className="text-[10px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss {log.stopLoss ? `(-${log.stopLoss}%)` : ""}</span>
+                                  <span className="text-sm font-bold text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "Not Set"}</span>
+                                  {log.amount && log.stopLoss && log.status === "SUCCESS" && (
+                                    <span className="text-[10px] text-rose-500 mt-1">Est. -${(parseFloat(log.amount) * parseFloat(log.stopLoss) / 100).toFixed(2)} USDT</span>
+                                  )}
+                               </div>
+                            </div>
+                          )}
                           
                           {(log.reason || log.status === "SUCCESS") && (
                             <div className="mt-3 text-[10px] text-slate-500 font-mono border-t border-[#30363d]/50 pt-2 text-right">
-                               {log.reason || "Executed Limit Order by AI Expert Bot"}
+                               {log.isClose ? "Position liquidated or closed via SL/TP" : (log.reason || "Executed Limit Order by AI Expert Bot")}
                             </div>
                           )}
                        </div>

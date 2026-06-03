@@ -83,7 +83,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.1)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.2)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -385,7 +385,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.7.1</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.7.2</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -697,23 +697,37 @@ function main() {
                     
                     <div className="grid grid-cols-2 gap-3 mt-4">
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP Price (USDT)</label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (%)</label>
+                            <div className="flex gap-1">
+                               <button onClick={() => setTakeProfit("0.2")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">0.2%</button>
+                               <button onClick={() => setTakeProfit("0.5")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">0.5%</button>
+                               <button onClick={() => setTakeProfit("1")} className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 transition-colors">1%</button>
+                            </div>
+                          </div>
                           <input 
                             type="number"
                             value={takeProfit}
                             onChange={(e) => setTakeProfit(e.target.value)}
                             className="w-full bg-[#0d1117] border border-emerald-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                            placeholder="Price (Optional)"
+                            placeholder="0 (Off)"
                           />
                        </div>
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL Price (USDT)</label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
+                            <div className="flex gap-1">
+                               <button onClick={() => setStopLoss("0.2")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">0.2%</button>
+                               <button onClick={() => setStopLoss("0.5")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">0.5%</button>
+                               <button onClick={() => setStopLoss("1")} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors">1%</button>
+                            </div>
+                          </div>
                           <input 
                             type="number"
                             value={stopLoss}
                             onChange={(e) => setStopLoss(e.target.value)}
                             className="w-full bg-[#0d1117] border border-rose-500/20 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-rose-500"
-                            placeholder="Price (Optional)"
+                            placeholder="0 (Off)"
                           />
                        </div>
                     </div>

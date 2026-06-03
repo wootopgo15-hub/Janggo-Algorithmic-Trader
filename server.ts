@@ -75,13 +75,15 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   let presetStopLossPrice;
 
   if (takeProfitPct && parseFloat(takeProfitPct) > 0) {
-    // takeProfitPct is now passed as an absolute price directly from the UI
-    presetTakeProfitPrice = (Math.round(parseFloat(takeProfitPct) * priceFactor) / priceFactor).toFixed(pricePlace);
+    let tpPct = parseFloat(takeProfitPct);
+    let tpTarget = side === "buy" ? price * (1 + tpPct / 100) : price * (1 - tpPct / 100);
+    presetTakeProfitPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
   }
 
   if (stopLossPct && parseFloat(stopLossPct) > 0) {
-    // stopLossPct is now passed as an absolute price directly from the UI
-    presetStopLossPrice = (Math.round(parseFloat(stopLossPct) * priceFactor) / priceFactor).toFixed(pricePlace);
+    let slPct = parseFloat(stopLossPct);
+    let slTarget = side === "buy" ? price * (1 - slPct / 100) : price * (1 + slPct / 100);
+    presetStopLossPrice = (Math.round(slTarget * priceFactor) / priceFactor).toFixed(pricePlace);
   }
   
   // Bitget Futures Order Payload

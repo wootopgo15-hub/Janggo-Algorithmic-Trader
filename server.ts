@@ -108,7 +108,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
     tradeSide: "open", // open or close
     orderType: "limit", // <--- CHANGED TO LIMIT TO SAVE FEES
     price: formattedEntryPrice, // <--- Added Limit Price
-    ...(presetTakeProfitPrice ? { presetTakeProfitPrice, presetStopSurplusPrice: presetTakeProfitPrice } : {}),
+    ...(presetTakeProfitPrice ? { presetStopSurplusPrice: presetTakeProfitPrice } : {}),
     ...(presetStopLossPrice ? { presetStopLossPrice } : {})
   };
 
@@ -373,6 +373,40 @@ app.get("/api/trade/balance", async (req, res) => {
       equity: parseFloat(data.accountEquity),
       unrealizedPL: parseFloat(data.unrealizedPL || "0")
     });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/trade/history", async (req, res) => {
+  try {
+    const { symbol } = req.body || {};
+    const { apiKey, passphrase, secretKey } = getBitgetCreds(req);
+    if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
+
+    let endpoint = "/api/v2/mix/position/history-position?productType=USDT-FUTURES";
+    if (symbol) {
+      endpoint += `&symbol=${symbol}`;
+    }
+    const timestamp = Date.now().toString();
+    const message = timestamp + "GET" + endpoint;
+    const signature = crypto.createHmac("sha256", secretKey).update(message).digest("base64");
+
+    const response = await axios.get(`https://api.bitget.com${endpoint}`, {
+      headers: {
+        "ACCESS-KEY": apiKey,
+        "ACCESS-SIGN": signature,
+        "ACCESS-TIMESTAMP": timestamp,
+        "ACCESS-PASSPHRASE": passphrase,
+        "Content-Type": "application/json",
+      }
+    });
+
+    if (response.data.code !== "00000") {
+      return res.status(400).json({ error: response.data.msg });
+    }
+
+    res.json(response.data.data);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

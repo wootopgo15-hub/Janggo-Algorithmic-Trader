@@ -70,10 +70,17 @@ export default function App() {
   const [stats, setStats] = useState(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_stats");
-      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+      return saved ? JSON.parse(saved) : { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
     } catch {
-      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null };
+      return { winCount: 0, lossCount: 0, totalProfit: 0, initialEquity: null, currentEquity: null, unrealizedPL: 0 };
     }
+  });
+
+  const [processedHistoryIds, setProcessedHistoryIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("janggo_trade_history_ids");
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
   });
 
   useEffect(() => {
@@ -83,6 +90,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("janggo_trade_stats", JSON.stringify(stats));
   }, [stats]);
+
+  useEffect(() => {
+    localStorage.setItem("janggo_trade_history_ids", JSON.stringify(processedHistoryIds));
+  }, [processedHistoryIds]);
+
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">("analysis");
   const [analysisView, setAnalysisView] = useState<"indicators" | "live">("indicators");
   const [showScript, setShowScript] = useState(false);
@@ -396,44 +408,65 @@ function main() {
     
     const fetchBalance = async () => {
       try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/balance", {
-          headers: {
-            ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
-            ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
-            ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
-          }
-        });
+        const headers = {
+          ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+          ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+          ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+        };
+
+        const res = await fetch(effectiveApiUrl + "/api/trade/balance", { headers });
         if (res.ok) {
           const data = await res.json();
-          setStats((prev: any) => {
-            const currentEq = data.equity;
-            const isInitial = prev.initialEquity === null;
-            const newProfit = isInitial ? 0 : currentEq - prev.initialEquity;
-            
-            // Check for realized jump (a simple heuristic for closed trades since we don't fetch order history here)
-            let wCount = prev.winCount;
-            let lCount = prev.lossCount;
-            
-            // If the PnL changes by more than $1 USDT suddenly (realized), we count it as a trade closing
-            const diff = prev.currentEquity !== null ? currentEq - prev.currentEquity : 0;
-            if (Math.abs(diff) > 1.0) {
-              if (diff > 0) wCount++;
-              else lCount++;
-            }
+          setStats((prev: any) => ({
+            ...prev,
+            initialEquity: prev.initialEquity === null ? data.equity : prev.initialEquity,
+            currentEquity: data.equity,
+            unrealizedPL: data.unrealizedPL
+          }));
+        }
 
-            return {
-              ...prev,
-              initialEquity: isInitial ? currentEq : prev.initialEquity,
-              currentEquity: currentEq,
-              totalProfit: newProfit,
-              unrealizedPL: data.unrealizedPL,
-              winCount: wCount,
-              lossCount: lCount
-            };
-          });
+        // Fetch closed positions history to update real win rate
+        const histRes = await fetch(effectiveApiUrl + "/api/trade/history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({ symbol })
+        });
+
+        if (histRes.ok) {
+          const histData = await histRes.json();
+          if (Array.isArray(histData)) {
+             setProcessedHistoryIds(prevProcessed => {
+                let newProcessed = [...prevProcessed];
+                let addedWins = 0;
+                let addedLosses = 0;
+                let addedProfit = 0;
+                let hasNew = false;
+
+                histData.forEach((pos: any) => {
+                  if (pos.positionId && !newProcessed.includes(pos.positionId)) {
+                     newProcessed.push(pos.positionId);
+                     const pnl = parseFloat(pos.netProfit || pos.pnl || "0");
+                     if (pnl > 0) addedWins++;
+                     else if (pnl < 0) addedLosses++;
+                     addedProfit += pnl;
+                     hasNew = true;
+                  }
+                });
+
+                if (hasNew) {
+                  setStats((prevParams: any) => ({
+                    ...prevParams,
+                    winCount: prevParams.winCount + addedWins,
+                    lossCount: prevParams.lossCount + addedLosses,
+                    totalProfit: prevParams.totalProfit + addedProfit
+                  }));
+                }
+                return newProcessed;
+             });
+          }
         }
       } catch (e) {
-        console.error("Failed to fetch balance", e);
+        console.error("Failed to fetch balance/history", e);
       }
     };
 
@@ -1036,7 +1069,13 @@ function main() {
                       <RefreshCw className="w-3 h-3" />
                       Reset Stats
                     </button>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-slate-500 font-mono uppercase">Wallet Balance</span>
+                        <span className="text-xl font-bold text-white font-mono">
+                          {stats.currentEquity !== null ? `$${stats.currentEquity.toFixed(2)}` : "---"}
+                        </span>
+                      </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-slate-500 font-mono uppercase">Total Trades</span>
                         <span className="text-xl font-bold text-white font-mono">{stats.winCount + stats.lossCount + (logs.length > 0 ? logs.length : 0)}</span>

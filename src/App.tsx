@@ -83,7 +83,7 @@ export default function App() {
   const effectiveApiUrl = customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.0)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.1)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -385,7 +385,7 @@ function main() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold tracking-tight text-white">Janggo Algorithmic Trader</h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.7.0</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">v3.7.1</span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
                 <p className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
@@ -697,7 +697,7 @@ function main() {
                     
                     <div className="grid grid-cols-2 gap-3 mt-4">
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono uppercase text-emerald-500/80">Take Profit (%)</label>
+                          <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (Trigger Price) %</label>
                           <input 
                             type="number"
                             value={takeProfit}
@@ -707,7 +707,7 @@ function main() {
                           />
                        </div>
                        <div className="space-y-1.5">
-                          <label className="text-xs text-slate-500 font-mono uppercase text-rose-500/80">Stop Loss (%)</label>
+                          <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (Trigger Price) %</label>
                           <input 
                             type="number"
                             value={stopLoss}

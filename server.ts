@@ -25,9 +25,9 @@ app.use((req, res, next) => {
 
 // Bitget API Credentials (Retrieved from headers or env)
 const getBitgetCreds = (req?: express.Request) => ({
-  apiKey: (req?.headers['x-bitget-api-key'] as string) || process.env.BITGET_API_KEY || "bg_c0bb357a72c3fb92fd9b5cb49de3c424",
-  secretKey: (req?.headers['x-bitget-secret-key'] as string) || process.env.BITGET_SECRET_KEY || "ece23d19f8e4a7b113effe079420f05cf9e1b8f433af8063593f40b090c84b45",
-  passphrase: (req?.headers['x-bitget-passphrase'] as string) || process.env.BITGET_PASSPHRASE || "geminibot2026",
+  apiKey: (req?.headers['x-bitget-api-key'] as string) || process.env.BITGET_API_KEY || "",
+  secretKey: (req?.headers['x-bitget-secret-key'] as string) || process.env.BITGET_SECRET_KEY || "",
+  passphrase: (req?.headers['x-bitget-passphrase'] as string) || process.env.BITGET_PASSPHRASE || "",
 });
 
 // Helper for Bitget V2 Signature

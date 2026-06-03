@@ -21,6 +21,8 @@ interface TradeLog {
   timestamp: string;
   status: "SUCCESS" | "FAILED";
   reason?: string;
+  takeProfit?: string;
+  stopLoss?: string;
 }
 
 export default function App() {
@@ -35,6 +37,10 @@ export default function App() {
   const [orderSize, setOrderSize] = useState("15");
   const [takeProfit, setTakeProfit] = useState("1");
   const [stopLoss, setStopLoss] = useState("0.5");
+  
+  const [editingLog, setEditingLog] = useState<TradeLog | null>(null);
+  const [editTakeProfit, setEditTakeProfit] = useState("");
+  const [editStopLoss, setEditStopLoss] = useState("");
   
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("janggo_bitget_apiKey") || "");
   const [secretKey, setSecretKey] = useState(() => localStorage.getItem("janggo_bitget_secretKey") || "");
@@ -200,8 +206,10 @@ function main() {
 }
 `;
 
-  const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false) => {
+  const executeTrade = async (side: "LONG" | "SHORT", amount: string, isAuto: boolean = false, customTp?: string, customSl?: string) => {
     try {
+      const activeTp = customTp ?? takeProfit;
+      const activeSl = customSl ?? stopLoss;
       const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
         headers: { 
@@ -210,7 +218,7 @@ function main() {
           ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
           ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
         },
-        body: JSON.stringify({ side, symbol, amount, takeProfit, stopLoss }),
+        body: JSON.stringify({ side, symbol, amount, takeProfit: activeTp, stopLoss: activeSl }),
       });
       
       const contentType = response.headers.get("content-type");
@@ -231,7 +239,9 @@ function main() {
         amount,
         timestamp: new Date().toLocaleTimeString(),
         status: response.ok ? "SUCCESS" : "FAILED",
-        reason: data.error
+        reason: data.error,
+        takeProfit: activeTp,
+        stopLoss: activeSl
       };
       
       setLogs(prev => [newLog, ...prev].slice(0, 50));
@@ -938,7 +948,13 @@ function main() {
                      </div>
                    ) : (
                      logs.map((log) => (
-                       <div key={log.id} className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all">
+                       <div key={log.id} 
+                            onClick={() => {
+                              setEditingLog(log);
+                              setEditTakeProfit(log.takeProfit || "");
+                              setEditStopLoss(log.stopLoss || "");
+                            }}
+                            className="flex items-center justify-between p-3 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer">
                           <div className="flex items-center gap-4">
                              <div className={cn("p-2 rounded-lg", log.side === "LONG" ? "bg-emerald-500/10 text-emerald-500" : "bg-rose-500/10 text-rose-500")}>
                                 {log.side === "LONG" ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
@@ -976,6 +992,77 @@ function main() {
              DISCLAIMER: FUTURES_QUANT_TRADING_INVOLVES_HIGH_RISK. NO_FINANCIAL_ADVICE_INTENDED.
            </p>
         </footer>
+        <AnimatePresence>
+          {editingLog && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onClick={() => setEditingLog(null)}
+            >
+              <motion.div 
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.95 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-[#0d1117] border border-[#30363d] rounded-2xl w-full max-w-sm overflow-hidden"
+              >
+                <div className="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#161b22]">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <History className="w-4 h-4 text-blue-400" />
+                    Edit & Resend Signal
+                  </h3>
+                  <button onClick={() => setEditingLog(null)} className="text-slate-400 hover:text-white">✕</button>
+                </div>
+                <div className="p-5 space-y-4">
+                  <div className="text-sm">
+                    <span className="text-slate-400 mr-2">Target:</span>
+                    <span className={cn("font-bold", editingLog.side === "LONG" ? "text-emerald-500" : "text-rose-500")}>
+                      {editingLog.side} {editingLog.symbol}
+                    </span>
+                    <span className="text-slate-400 ml-2 font-mono">({editingLog.amount} USDT)</span>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-mono text-emerald-500/80">TP (%)</label>
+                      <input 
+                        type="number"
+                        value={editTakeProfit}
+                        onChange={(e) => setEditTakeProfit(e.target.value)}
+                        className="w-full bg-black/40 border border-emerald-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500/50"
+                        placeholder="0 (Off)"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-500 font-mono text-rose-500/80">SL (%)</label>
+                      <input 
+                        type="number"
+                        value={editStopLoss}
+                        onChange={(e) => setEditStopLoss(e.target.value)}
+                        className="w-full bg-black/40 border border-rose-500/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-rose-500/50"
+                        placeholder="0 (Off)"
+                      />
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      executeTrade(editingLog.side, editingLog.amount, false, editTakeProfit, editStopLoss);
+                      setEditingLog(null);
+                    }}
+                    className="w-full mt-2 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold transition-all flex items-center justify-center gap-2"
+                  >
+                    <Play className="w-4 h-4" />
+                    Resend Signal
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </div>
 
       <style>{`

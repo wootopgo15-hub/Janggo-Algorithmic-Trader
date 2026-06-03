@@ -1177,7 +1177,10 @@ function main() {
                  {/* Stats Board */}
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 relative">
                     <button 
-                      onClick={() => setLogs([])}
+                      onClick={() => {
+                        setLogs([]);
+                        setProcessedHistoryIds([]);
+                      }}
                       className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-[10px] text-rose-500 hover:bg-rose-500/20 transition-colors uppercase font-mono border border-rose-500/20"
                     >
                       <RefreshCw className="w-3 h-3" />
@@ -1215,10 +1218,22 @@ function main() {
                  </div>
 
                  <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 flex flex-col flex-1 min-h-0">
-                   <h3 className="text-sm font-bold text-white mb-6 flex items-center gap-2">
-                      <History className="w-4 h-4 text-slate-500" />
-                      Execution History
-                   </h3>
+                   <div className="flex items-center justify-between mb-6">
+                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <History className="w-4 h-4 text-slate-500" />
+                        Execution History
+                     </h3>
+                     <button
+                       onClick={() => {
+                         if (fetchBalanceRef.current) fetchBalanceRef.current();
+                       }}
+                       title="신호 강제 새로고침"
+                       className="p-1.5 text-slate-400 hover:text-white bg-[#21262d] border border-[#30363d] rounded-md hover:bg-[#30363d] transition-all flex items-center gap-1 text-[10px] uppercase font-mono"
+                     >
+                       <RefreshCw className="w-3 h-3" />
+                       신호 확인
+                     </button>
+                   </div>
 
                    <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                      {logs.length === 0 ? (

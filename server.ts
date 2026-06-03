@@ -23,22 +23,22 @@ app.use((req, res, next) => {
   }
 });
 
-// Bitget API Credentials (Retrieved from env)
-const getBitgetCreds = () => ({
-  apiKey: process.env.BITGET_API_KEY || "bg_c0bb357a72c3fb92fd9b5cb49de3c424",
-  secretKey: process.env.BITGET_SECRET_KEY || "ece23d19f8e4a7b113effe079420f05cf9e1b8f433af8063593f40b090c84b45",
-  passphrase: process.env.BITGET_PASSPHRASE || "geminibot2026",
+// Bitget API Credentials (Retrieved from headers or env)
+const getBitgetCreds = (req?: express.Request) => ({
+  apiKey: (req?.headers['x-bitget-api-key'] as string) || process.env.BITGET_API_KEY || "bg_c0bb357a72c3fb92fd9b5cb49de3c424",
+  secretKey: (req?.headers['x-bitget-secret-key'] as string) || process.env.BITGET_SECRET_KEY || "ece23d19f8e4a7b113effe079420f05cf9e1b8f433af8063593f40b090c84b45",
+  passphrase: (req?.headers['x-bitget-passphrase'] as string) || process.env.BITGET_PASSPHRASE || "geminibot2026",
 });
 
 // Helper for Bitget V2 Signature
-function generateBitgetSignature(timestamp: string, method: string, path: string, body: string = "") {
-  const { secretKey } = getBitgetCreds();
+function generateBitgetSignature(timestamp: string, method: string, path: string, body: string = "", req?: express.Request) {
+  const { secretKey } = getBitgetCreds(req);
   const message = timestamp + method.toUpperCase() + path + body;
   return crypto.createHmac("sha256", secretKey).update(message).digest("base64");
 }
 
-async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmount: string, takeProfitPct?: string, stopLossPct?: string) {
-  const { apiKey, passphrase } = getBitgetCreds();
+async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmount: string, takeProfitPct?: string, stopLossPct?: string, req?: express.Request) {
+  const { apiKey, passphrase } = getBitgetCreds(req);
   if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing in environment");
 
   // 1. Get contract precision
@@ -102,7 +102,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   };
 
   const bodyStr = JSON.stringify(body);
-  const signature = generateBitgetSignature(timestamp, "POST", endpoint, bodyStr);
+  const signature = generateBitgetSignature(timestamp, "POST", endpoint, bodyStr, req);
 
   try {
     const response = await axios.post(`https://api.bitget.com${endpoint}`, body, {
@@ -330,13 +330,13 @@ app.post("/api/analyze", async (req, res) => {
 
 app.get("/api/trade/balance", async (req, res) => {
   try {
-    const { apiKey, passphrase } = getBitgetCreds();
+    const { apiKey, passphrase } = getBitgetCreds(req);
     if (!apiKey || !passphrase) throw new Error("Bitget API credentials missing");
 
     const endpoint = "/api/v2/mix/account/accounts?productType=USDT-FUTURES";
     const timestamp = Date.now().toString();
     const message = timestamp + "GET" + endpoint;
-    const signature = crypto.createHmac("sha256", getBitgetCreds().secretKey).update(message).digest("base64");
+    const signature = crypto.createHmac("sha256", getBitgetCreds(req).secretKey).update(message).digest("base64");
 
     const response = await axios.get(`https://api.bitget.com${endpoint}`, {
       headers: {
@@ -378,7 +378,7 @@ app.post("/api/trade/execute", async (req, res) => {
     console.log(`[TRADE PARSED] side: ${side}, symbol: ${symbol}, amount: ${amount}, TP: ${takeProfit}, SL: ${stopLoss}`);
     // Map LONG/SHORT to buy/sell
     const bitgetSide = side === "LONG" ? "buy" : "sell";
-    const result = await executeFuturesOrder(bitgetSide, symbol, amount, takeProfit, stopLoss);
+    const result = await executeFuturesOrder(bitgetSide, symbol, amount, takeProfit, stopLoss, req);
     if (result.code !== "00000") {
       return res.status(400).json({ error: result.msg || "Order failed" });
     }

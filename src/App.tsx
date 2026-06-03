@@ -35,6 +35,21 @@ export default function App() {
   const [orderSize, setOrderSize] = useState("15");
   const [takeProfit, setTakeProfit] = useState("1");
   const [stopLoss, setStopLoss] = useState("0.5");
+  
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem("janggo_bitget_apiKey") || "");
+  const [secretKey, setSecretKey] = useState(() => localStorage.getItem("janggo_bitget_secretKey") || "");
+  const [passphrase, setPassphrase] = useState(() => localStorage.getItem("janggo_bitget_passphrase") || "");
+
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_apiKey", apiKey);
+  }, [apiKey]);
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_secretKey", secretKey);
+  }, [secretKey]);
+  useEffect(() => {
+    localStorage.setItem("janggo_bitget_passphrase", passphrase);
+  }, [passphrase]);
+
   const [logs, setLogs] = useState<TradeLog[]>(() => {
     try {
       const saved = localStorage.getItem("janggo_trade_logs");
@@ -189,7 +204,12 @@ function main() {
     try {
       const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+          ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+          ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+        },
         body: JSON.stringify({ side, symbol, amount, takeProfit, stopLoss }),
       });
       
@@ -256,7 +276,7 @@ function main() {
       const isFirstView = !(currentCacheKey in lastSignalRef.current);
       const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
       
-      if (isAutoTrade && data.decision !== "HOLD" && (isFirstView || data.decision !== previousDecision)) {
+      if (!isFirstView && isAutoTrade && data.decision !== "HOLD" && data.decision !== previousDecision) {
         executeTrade(data.decision, orderSize, true);
       }
       
@@ -280,7 +300,13 @@ function main() {
     
     const fetchBalance = async () => {
       try {
-        const res = await fetch(effectiveApiUrl + "/api/trade/balance");
+        const res = await fetch(effectiveApiUrl + "/api/trade/balance", {
+          headers: {
+            ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+            ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+            ...(passphrase ? { "x-bitget-passphrase": passphrase } : {})
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           setStats((prev: any) => {
@@ -690,6 +716,37 @@ function main() {
                             placeholder="0 (Off)"
                           />
                        </div>
+                    </div>
+
+                    {/* API Keys Settings */}
+                    <div className="pt-4 border-t border-[#30363d] space-y-3">
+                      <h4 className="text-xs font-bold text-slate-400 flex items-center gap-2">
+                        <Settings className="w-3 h-3" />
+                        Bitget API Settings
+                      </h4>
+                      <div className="space-y-2">
+                        <input 
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="API Key (공란 시 서버 기본값)"
+                        />
+                        <input 
+                          type="password"
+                          value={secretKey}
+                          onChange={(e) => setSecretKey(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Secret Key (공란 시 서버 기본값)"
+                        />
+                        <input 
+                          type="password"
+                          value={passphrase}
+                          onChange={(e) => setPassphrase(e.target.value)}
+                          className="w-full bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          placeholder="Passphrase (공란 시 서버 기본값)"
+                        />
+                      </div>
                     </div>
 
                     <div className="pt-4 grid grid-cols-2 gap-3">

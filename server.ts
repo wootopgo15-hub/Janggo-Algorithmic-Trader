@@ -71,13 +71,13 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
   // Calculate TP and SL prices if provided
   const pricePlace = parseInt(contract.pricePlace || "1", 10);
   const priceFactor = Math.pow(10, pricePlace);
-  let presetTakeProfitPrice;
+  let presetStopSurplusPrice;
   let presetStopLossPrice;
 
   if (takeProfitPct && parseFloat(takeProfitPct) > 0) {
     let tpPct = parseFloat(takeProfitPct);
     let tpTarget = side === "buy" ? price * (1 + tpPct / 100) : price * (1 - tpPct / 100);
-    presetTakeProfitPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
+    presetStopSurplusPrice = (Math.round(tpTarget * priceFactor) / priceFactor).toFixed(pricePlace);
   }
 
   if (stopLossPct && parseFloat(stopLossPct) > 0) {
@@ -96,7 +96,7 @@ async function executeFuturesOrder(side: "buy" | "sell", symbol: string, usdtAmo
     side: side,   // buy or sell
     tradeSide: "open", // open or close
     orderType: "market",
-    ...(presetTakeProfitPrice ? { presetTakeProfitPrice } : {}),
+    ...(presetStopSurplusPrice ? { presetStopSurplusPrice } : {}),
     ...(presetStopLossPrice ? { presetStopLossPrice } : {})
   };
 
@@ -409,8 +409,9 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+  const serverPort = typeof PORT === "string" ? parseInt(PORT, 10) : PORT;
+  app.listen(serverPort, "0.0.0.0", () => {
+    console.log(`Server running at http://localhost:${serverPort}`);
   });
 }
 

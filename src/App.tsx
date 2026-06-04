@@ -560,112 +560,117 @@ function main() {
         }));
       }
 
-      // Fetch closed positions history to update real win rate
-      const histRes = await fetch(effectiveApiUrl + "/api/trade/history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ symbol }),
-      });
+      // Fetch closed & open positions for all targets
+      const targetSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
+      const allHistData: any[] = [];
+      const allPosData: any[] = [];
 
-      if (histRes.ok) {
-        const rawHistData = await histRes.json();
-        const histData = Array.isArray(rawHistData)
-          ? rawHistData
-          : rawHistData?.list || [];
-
-        if (Array.isArray(histData)) {
-          let newLogsToAdd: TradeLog[] = [];
-
-          setProcessedHistoryIds((prevProcessed) => {
-            let newProcessed = [...prevProcessed];
-            let addedWins = 0;
-            let addedLosses = 0;
-            let addedProfit = 0;
-            let hasNew = false;
-
-            histData.forEach((pos: any) => {
-              if (pos.positionId && !newProcessed.includes(pos.positionId)) {
-                newProcessed.push(pos.positionId);
-                const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
-                if (pnlVal > 0) addedWins++;
-                else if (pnlVal < 0) addedLosses++;
-                addedProfit += pnlVal;
-                hasNew = true;
-
-                newLogsToAdd.push({
-                  id: pos.positionId + "_close",
-                  side: "CLOSE",
-                  symbol: pos.symbol || symbol,
-                  amount: pos.closeTotalPos || "0",
-                  timestamp:
-                    pos.uTime || pos.cTime
-                      ? new Date(parseInt(pos.uTime || pos.cTime)).toISOString()
-                      : new Date().toISOString(),
-                  status: "SUCCESS",
-                  pnl: pnlVal.toFixed(2),
-                  isClose: true,
-                  entryPrice: parseFloat(pos.openAvgPrice || "0"),
-                  tpPrice: pos.closeAvgPrice,
-                });
-              }
-            });
-
-            if (hasNew) {
-              setStats((prevParams: any) => ({
-                ...prevParams,
-                winCount: prevParams.winCount + addedWins,
-                lossCount: prevParams.lossCount + addedLosses,
-                totalProfit: prevParams.totalProfit + addedProfit,
-              }));
-            }
-            return newProcessed;
+      for (const tSym of targetSymbols) {
+        try {
+          const histRes = await fetch(effectiveApiUrl + "/api/trade/history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...headers },
+            body: JSON.stringify({ symbol: tSym }),
           });
-
-          if (newLogsToAdd.length > 0) {
-            setLogs((prev) => [...newLogsToAdd, ...prev].slice(0, 50));
+          if (histRes.ok) {
+            const raw = await histRes.json();
+            const arr = Array.isArray(raw) ? raw : raw?.list || [];
+            if (Array.isArray(arr)) allHistData.push(...arr);
           }
+
+          const posRes = await fetch(effectiveApiUrl + "/api/trade/positions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...headers },
+            body: JSON.stringify({ symbol: tSym }),
+          });
+          if (posRes.ok) {
+            const raw = await posRes.json();
+            const arr = Array.isArray(raw) ? raw : raw?.list || [];
+            if (Array.isArray(arr)) allPosData.push(...arr);
+          }
+        } catch (e) {
+          console.error(`Error for ${tSym}:`, e);
         }
       }
 
-      // Fetch currently open positions
-      const posRes = await fetch(effectiveApiUrl + "/api/trade/positions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify({ symbol }),
-      });
+      if (allHistData.length > 0) {
+        let newLogsToAdd: TradeLog[] = [];
 
-      if (posRes.ok) {
-        const rawPosData = await posRes.json();
-        const posData = Array.isArray(rawPosData)
-          ? rawPosData
-          : rawPosData?.list || [];
+        setProcessedHistoryIds((prevProcessed) => {
+          let newProcessed = [...prevProcessed];
+          let addedWins = 0;
+          let addedLosses = 0;
+          let addedProfit = 0;
+          let hasNew = false;
 
-        if (Array.isArray(posData)) {
-          const currentOpenPositions = posData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
-          
-          const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
-            const side = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
-            return {
-              id: pos.positionId + "_open",
-              side: side,
-              symbol: pos.symbol || symbol,
-              amount: pos.total || "0",
-              timestamp: pos.cTime || pos.uTime ? new Date(parseInt(pos.cTime || pos.uTime)).toISOString() : new Date().toISOString(),
-              status: "SUCCESS",
-              entryPrice: parseFloat(pos.openAvgPrice || pos.openPrice || "0"),
-              pnl: pos.unrealizedPL || "0",
-              isClose: false,
-              isOpenPos: true,
-            };
-          }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          allHistData.forEach((pos: any) => {
+            const posId = pos.posId || pos.positionId;
+            if (posId && !newProcessed.includes(posId)) {
+              newProcessed.push(posId);
+              const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
+              if (pnlVal > 0) addedWins++;
+              else if (pnlVal < 0) addedLosses++;
+              addedProfit += pnlVal;
+              hasNew = true;
 
-          setLogs((prev) => {
-            const closedLogs = prev.filter(l => !l.isOpenPos);
-            // Optional: avoid duplicate open logs from `executeTrade` that might be pending by checking id matching, 
-            // but `isOpenPos` handles it since execute logs don't have `isOpenPos=true` initially, wait!
-            return [...newOpenLogs, ...closedLogs].slice(0, 50);
+              newLogsToAdd.push({
+                id: posId + "_close",
+                side: "CLOSE",
+                symbol: pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN",
+                amount: pos.closeTotalPos || "0",
+                timestamp:
+                  pos.uTime || pos.cTime
+                    ? new Date(parseInt(pos.uTime || pos.cTime)).toISOString()
+                    : new Date().toISOString(),
+                status: "SUCCESS",
+                pnl: pnlVal.toFixed(2),
+                isClose: true,
+                entryPrice: parseFloat(pos.openAvgPrice || "0"),
+                tpPrice: pos.closeAvgPrice,
+              });
+            }
           });
+
+          if (hasNew) {
+            setStats((prevParams: any) => ({
+              ...prevParams,
+              winCount: prevParams.winCount + addedWins,
+              lossCount: prevParams.lossCount + addedLosses,
+              totalProfit: prevParams.totalProfit + addedProfit,
+            }));
+          }
+          return newProcessed;
+        });
+
+        if (newLogsToAdd.length > 0) {
+          setLogs((prev) => [...newLogsToAdd, ...prev].slice(0, 50));
         }
+      }
+
+      if (allPosData.length > 0) {
+        const currentOpenPositions = allPosData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
+        
+        const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
+          const side = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
+          const posId = pos.posId || pos.positionId || Math.random().toString();
+          return {
+            id: posId + "_open",
+            side: side,
+            symbol: pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN",
+            amount: pos.total || "0",
+            timestamp: pos.cTime || pos.uTime ? new Date(parseInt(pos.cTime || pos.uTime)).toISOString() : new Date().toISOString(),
+            status: "SUCCESS",
+            entryPrice: parseFloat(pos.openAvgPrice || pos.openPrice || "0"),
+            pnl: pos.unrealizedPL || "0",
+            isClose: false,
+            isOpenPos: true,
+          };
+        }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        setLogs((prev) => {
+          const closedLogs = prev.filter(l => !l.isOpenPos);
+          return [...newOpenLogs, ...closedLogs].slice(0, 50);
+        });
       }
     } catch (e) {
       console.error("Failed to fetch balance/history", e);
@@ -1855,7 +1860,7 @@ function main() {
                         <p className="text-sm">No trades executed yet</p>
                       </div>
                     ) : (
-                      logs.map((log) => (
+                      [...logs].sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((log) => (
                         <div
                           key={log.id}
                           onClick={() => {
@@ -1863,9 +1868,12 @@ function main() {
                             setEditTakeProfit(log.takeProfit || "");
                             setEditStopLoss(log.stopLoss || "");
                           }}
-                          className="flex flex-col p-4 bg-[#0d1117] border border-[#30363d] rounded-xl group hover:border-slate-600 transition-all cursor-pointer"
+                          className={cn(
+                            "flex flex-col p-4 bg-[#0d1117] border rounded-xl group transition-all cursor-pointer",
+                            log.isOpenPos ? "border-blue-500/30 hover:border-blue-500/50" : "border-[#30363d] hover:border-slate-500"
+                          )}
                         >
-                          <div className="flex items-center justify-between mb-3.5">
+                          <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-3">
                               <div
                                 className={cn(
@@ -1873,7 +1881,7 @@ function main() {
                                   log.isClose
                                     ? "bg-slate-500/10 text-slate-400"
                                     : log.isOpenPos
-                                      ? "bg-blue-500/10 text-blue-500 border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+                                      ? "bg-blue-500/10 text-blue-400"
                                       : log.side === "LONG"
                                         ? "bg-emerald-500/10 text-emerald-500"
                                         : "bg-rose-500/10 text-rose-500",
@@ -1891,188 +1899,92 @@ function main() {
                                   <TrendingDown className="w-4 h-4" />
                                 )}
                               </div>
-                              <div>
-                                <div className="text-sm font-bold flex items-center gap-2">
-                                  {log.isClose ? "CLOSED" : log.side}{" "}
-                                  {log.symbol}
+                              <div className="flex flex-col">
+                                <div className="text-sm font-bold flex items-center gap-2 text-slate-200">
+                                  {log.side} {log.symbol}
                                   <span
                                     className={cn(
-                                      "text-[10px] px-1.5 py-0.5 rounded uppercase font-mono",
+                                      "text-[9px] px-1.5 py-0.5 rounded font-mono font-bold tracking-widest",
                                       log.isClose
                                         ? "bg-slate-500/20 text-slate-400"
                                         : log.isOpenPos
-                                          ? "bg-blue-500/20 text-blue-400 font-bold tracking-widest animate-pulse"
+                                          ? "bg-blue-500/20 text-blue-400 animate-pulse"
                                           : log.status === "SUCCESS"
                                             ? "bg-emerald-500/20 text-emerald-500"
                                             : "bg-rose-500/20 text-rose-500",
                                     )}
                                   >
                                     {log.isClose
-                                      ? "REALIZED"
+                                      ? "CLOSED"
                                       : log.isOpenPos
-                                        ? "TRADING..."
+                                        ? "TRADING"
                                         : log.status === "SUCCESS"
-                                          ? "LIMIT ORDER"
+                                          ? "LIMIT"
                                           : log.status}
                                   </span>
                                 </div>
-                                <div className="text-xs text-slate-500 font-mono mt-0.5">
+                                <div className="text-[10px] text-slate-500 font-mono mt-0.5 tracking-wider">
                                   {(() => {
                                     try {
                                       const d = new Date(log.timestamp);
-                                      if (isNaN(d.getTime()))
-                                        return log.timestamp;
-                                      return d.toLocaleString(undefined, {
-                                        month: "short",
-                                        day: "numeric",
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                        second: "2-digit",
-                                      });
+                                      if (isNaN(d.getTime())) return log.timestamp;
+                                      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
                                     } catch (e) {
                                       return log.timestamp;
                                     }
-                                  })()}{" "}
-                                  • {log.amount} USDT
+                                  })()}
                                 </div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-3">
-                              <div className="text-[10px] font-mono text-slate-600 group-hover:text-slate-400 transition-all text-right max-w-[120px] truncate" title={log.id}>
-                                Pos_{log.id.replace('_open', '').replace('_close', '').substring(0, 8)}...
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="text-xs font-bold text-slate-300 font-mono">{log.amount} USDT</span>
+                              <div className="text-[9px] font-mono text-slate-600 truncate max-w-[80px]" title={log.id}>
+                                #{log.id.replace('_open', '').replace('_close', '').substring(0, 8)}
                               </div>
-                              <button
-                                onClick={(e) => deleteLog(e, log.id)}
-                                className="text-slate-600 hover:text-rose-500 transition-colors p-1 rounded-md hover:bg-rose-500/10"
-                                title="Delete log"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
                             </div>
                           </div>
 
                           {/* Order details grid */}
                           {log.isClose ? (
-                            <div className="flex justify-between items-center p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                            <div className="flex justify-between items-center p-3 bg-slate-500/5 rounded-lg border border-slate-500/10">
                               <div className="flex flex-col">
-                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">
-                                  Status
-                                </span>
-                                <span className="text-sm font-bold text-slate-200 font-mono">
-                                  Position Closed
-                                </span>
+                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Status</span>
+                                <span className="text-xs text-slate-300 font-mono">Realized</span>
                               </div>
                               <div className="flex flex-col items-end">
-                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">
-                                  Realized PnL
-                                </span>
-                                <span
-                                  className={cn(
-                                    "text-lg font-bold font-mono",
-                                    parseFloat(log.pnl || "0") >= 0
-                                      ? "text-emerald-500"
-                                      : "text-rose-500",
-                                  )}
-                                >
-                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
-                                  {log.pnl} USDT
+                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Profit/Loss</span>
+                                <span className={cn("text-sm font-bold font-mono", parseFloat(log.pnl || "0") >= 0 ? "text-emerald-500" : "text-rose-500")}>
+                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}{log.pnl} USDT
                                 </span>
                               </div>
                             </div>
                           ) : log.isOpenPos ? (
                             <div className="flex justify-between items-center p-3 bg-blue-500/5 rounded-lg border border-blue-500/20">
                               <div className="flex flex-col">
-                                <span className="text-[10px] text-blue-400/70 uppercase font-mono mb-1">
-                                  Entry Price
-                                </span>
-                                <span className="text-sm font-bold text-blue-100 font-mono">
-                                  {log.entryPrice ? `$${log.entryPrice}` : "-"}
-                                </span>
+                                <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">Entry Price</span>
+                                <span className="text-xs font-bold text-blue-200 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
                               </div>
                               <div className="flex flex-col items-end">
-                                <span className="text-[10px] text-blue-400/70 uppercase font-mono mb-1">
-                                  Unrealized PnL
-                                </span>
-                                <span
-                                  className={cn(
-                                    "text-lg font-bold font-mono",
-                                    parseFloat(log.pnl || "0") >= 0
-                                      ? "text-emerald-400"
-                                      : "text-rose-400",
-                                  )}
-                                >
-                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
-                                  {log.pnl} USDT
+                                <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">Unrealized PnL</span>
+                                <span className={cn("text-sm font-bold font-mono", parseFloat(log.pnl || "0") >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}{log.pnl} USDT
                                 </span>
                               </div>
                             </div>
                           ) : (
-                            <div className="grid grid-cols-3 gap-2 p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                            <div className="flex justify-between items-center p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
                               <div className="flex flex-col">
-                                <span className="text-[10px] text-slate-500 uppercase font-mono mb-1">
-                                  Limit Entry
-                                </span>
-                                <span className="text-sm font-bold text-slate-200 font-mono">
-                                  {log.entryPrice ? `$${log.entryPrice}` : "-"}
-                                </span>
+                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Limit Entry</span>
+                                <span className="text-xs text-slate-300 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
                               </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] text-emerald-500/70 uppercase font-mono mb-1">
-                                  Take Profit{" "}
-                                  {log.takeProfit
-                                    ? `(+${log.takeProfit}%)`
-                                    : ""}
-                                </span>
-                                <span className="text-sm font-bold text-emerald-400 font-mono">
-                                  {log.tpPrice ? `$${log.tpPrice}` : "Not Set"}
-                                </span>
-                                {log.amount &&
-                                  log.takeProfit &&
-                                  log.status === "SUCCESS" && (
-                                    <span className="text-[10px] text-emerald-500 mt-1">
-                                      Est. +$
-                                      {(
-                                        (parseFloat(log.amount) *
-                                          parseFloat(log.takeProfit)) /
-                                        100
-                                      ).toFixed(2)}{" "}
-                                      USDT
-                                    </span>
-                                  )}
+                              <div className="flex flex-col items-end">
+                                <span className="text-[9px] text-emerald-500/70 uppercase font-mono mb-1">Target TP</span>
+                                <span className="text-xs text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "-"}</span>
                               </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] text-rose-500/70 uppercase font-mono mb-1">
-                                  Stop Loss{" "}
-                                  {log.stopLoss ? `(-${log.stopLoss}%)` : ""}
-                                </span>
-                                <span className="text-sm font-bold text-rose-400 font-mono">
-                                  {log.slPrice ? `$${log.slPrice}` : "Not Set"}
-                                </span>
-                                {log.amount &&
-                                  log.stopLoss &&
-                                  log.status === "SUCCESS" && (
-                                    <span className="text-[10px] text-rose-500 mt-1">
-                                      Est. -$
-                                      {(
-                                        (parseFloat(log.amount) *
-                                          parseFloat(log.stopLoss)) /
-                                        100
-                                      ).toFixed(2)}{" "}
-                                      USDT
-                                    </span>
-                                  )}
+                              <div className="flex flex-col items-end">
+                                <span className="text-[9px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss</span>
+                                <span className="text-xs text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "-"}</span>
                               </div>
-                            </div>
-                          )}
-
-                          {(log.reason || log.status === "SUCCESS") && (
-                            <div className="mt-3 text-[10px] text-slate-500 font-mono border-t border-[#30363d]/50 pt-2 text-right">
-                              {log.isClose
-                                ? "Position liquidated or closed via SL/TP"
-                                : log.isOpenPos
-                                  ? "Current active position being monitored"
-                                  : log.reason ||
-                                    "Executed Limit Order by AI Expert Bot"}
                             </div>
                           )}
                         </div>

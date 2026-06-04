@@ -1,5 +1,16 @@
-import axios from 'axios';
-axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES').then(res => {
-  const eth = res.data.data.find(c => c.symbol === 'ETHUSDT');
-  console.log(eth);
-})
+import http from 'https';
+
+http.get('https://bitgetlimited.github.io/apidoc/en/mix/order/place-order.html', (res) => {
+  let data = '';
+  res.on('data', (chunk) => data += chunk);
+  res.on('end', () => {
+    const lines = data.split('\n');
+    lines.forEach((line) => {
+      if (line.toLowerCase().includes('preset')) {
+        console.log(line.trim());
+      }
+    });
+  });
+}).on('error', (err) => {
+  console.log('Error: ' + err.message);
+});

@@ -1,6 +1,5 @@
-{
-  "name": "Crypto Futures Quant Expert",
-  "description": "Advanced futures trading analyzer and bot using RSI/MACD for Bitget USDT-M Futures (LONG/SHORT).",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+import axios from 'axios';
+axios.get('https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES').then(res => {
+  const eth = res.data.data.find(c => c.symbol === 'ETHUSDT');
+  console.log(eth);
+})

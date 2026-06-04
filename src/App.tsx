@@ -641,51 +641,30 @@ function main() {
           : rawPosData?.list || [];
 
         if (Array.isArray(posData)) {
-          let openLogsToAdd: TradeLog[] = [];
+          const currentOpenPositions = posData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
+          
+          const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
+            const side = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
+            return {
+              id: pos.positionId + "_open",
+              side: side,
+              symbol: pos.symbol || symbol,
+              amount: pos.total || "0",
+              timestamp: pos.cTime || pos.uTime ? new Date(parseInt(pos.cTime || pos.uTime)).toISOString() : new Date().toISOString(),
+              status: "SUCCESS",
+              entryPrice: parseFloat(pos.openAvgPrice || pos.openPrice || "0"),
+              pnl: pos.unrealizedPL || "0",
+              isClose: false,
+              isOpenPos: true,
+            };
+          }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-          setProcessedHistoryIds((prevProcessed) => {
-            let newProcessed = [...prevProcessed];
-
-            posData.forEach((pos: any) => {
-              // Bitget open positions usually have total > 0. If it's 0, it's actually closed
-              const totalPos = parseFloat(pos.total || pos.available || "0");
-              if (
-                totalPos > 0 &&
-                pos.positionId &&
-                !newProcessed.includes(pos.positionId + "_open")
-              ) {
-                newProcessed.push(pos.positionId + "_open");
-                const side =
-                  pos.holdSide === "long" || pos.holdSide === "LONG"
-                    ? "LONG"
-                    : "SHORT";
-
-                openLogsToAdd.push({
-                  id: pos.positionId,
-                  side: side,
-                  symbol: pos.symbol || symbol,
-                  amount: pos.total || "0",
-                  timestamp:
-                    pos.cTime || pos.uTime
-                      ? new Date(parseInt(pos.cTime || pos.uTime)).toISOString()
-                      : new Date().toISOString(),
-                  status: "SUCCESS",
-                  entryPrice: parseFloat(
-                    pos.openAvgPrice || pos.openPrice || "0",
-                  ),
-                  pnl: pos.unrealizedPL || "0",
-                  isClose: false,
-                  isOpenPos: true,
-                });
-              }
-            });
-
-            return newProcessed;
+          setLogs((prev) => {
+            const closedLogs = prev.filter(l => !l.isOpenPos);
+            // Optional: avoid duplicate open logs from `executeTrade` that might be pending by checking id matching, 
+            // but `isOpenPos` handles it since execute logs don't have `isOpenPos=true` initially, wait!
+            return [...newOpenLogs, ...closedLogs].slice(0, 50);
           });
-
-          if (openLogsToAdd.length > 0) {
-            setLogs((prev) => [...openLogsToAdd, ...prev].slice(0, 50));
-          }
         }
       }
     } catch (e) {

@@ -26,14 +26,22 @@ export interface AnalysisResult {
   win_probability?: string;
   indicators: {
     rsi: number[];
+    stochRsi?: { stochRSI: number; k: number; d: number }[];
     macd: MACDResult[];
   };
   indicators5m?: {
     rsi: number[];
+    stochRsi?: { stochRSI: number; k: number; d: number }[];
+    macd: MACDResult[];
+  };
+  indicators10m?: {
+    rsi: number[];
+    stochRsi?: { stochRSI: number; k: number; d: number }[];
     macd: MACDResult[];
   };
   indicators15m?: {
     rsi: number[];
+    stochRsi?: { stochRSI: number; k: number; d: number }[];
     macd: MACDResult[];
   };
   lastPrices: number[];

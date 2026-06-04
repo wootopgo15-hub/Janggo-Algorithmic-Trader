@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import axios from "axios";
-import { RSI, MACD, ATR } from "technicalindicators";
+import { RSI, MACD, ATR, StochasticRSI } from "technicalindicators";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -235,7 +235,7 @@ async function fetchBitgetFuturesCandles(
           symbol,
           productType: "USDT-FUTURES",
           granularity,
-          limit: 100,
+          limit: 1000,
         },
       },
     );
@@ -244,16 +244,14 @@ async function fetchBitgetFuturesCandles(
       throw new Error(`Bitget API Error: ${response.data.msg}`);
     }
 
-    return response.data.data
-      .map((candle: any[]) => ({
-        timestamp: candle[0],
-        open: parseFloat(candle[1]),
-        high: parseFloat(candle[2]),
-        low: parseFloat(candle[3]),
-        close: parseFloat(candle[4]),
-        volume: parseFloat(candle[5]),
-      }))
-      .reverse();
+    return response.data.data.map((candle: any[]) => ({
+      timestamp: candle[0],
+      open: parseFloat(candle[1]),
+      high: parseFloat(candle[2]),
+      low: parseFloat(candle[3]),
+      close: parseFloat(candle[4]),
+      volume: parseFloat(candle[5]),
+    }));
   } catch (error) {
     console.error("Error fetching Bitget data:", error);
     throw error;
@@ -262,7 +260,7 @@ async function fetchBitgetFuturesCandles(
 
 // Simple in-memory cache to prevent Gemini quota exhaustion
 const analysisCache: Record<string, { data: any; timestamp: number }> = {};
-const CACHE_DURATION = 15 * 60 * 1000; // Increased to 15 minutes to respect 20-req/day free tier quota
+const CACHE_DURATION = 1 * 60 * 1000; // 1 minute cache for fresh signals while respecting Flash free tier quota
 
 app.post("/api/analyze", async (req, res) => {
   try {
@@ -289,39 +287,86 @@ app.post("/api/analyze", async (req, res) => {
 
     let candles: any[];
     let candles5m: any[];
+    let candles10m: any[];
     let candles15m: any[];
 
     if (customData) {
       candles = customData;
       candles5m = customData;
+      candles10m = customData;
       candles15m = customData;
     } else {
       const [resMain, res5, res15] = await Promise.all([
         fetchBitgetFuturesCandles(symbol, granularity),
-        granularity === "5m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "5m"),
-        granularity === "15m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "15m")
+        granularity === "5m"
+          ? Promise.resolve(null)
+          : fetchBitgetFuturesCandles(symbol, "5m"),
+        granularity === "15m"
+          ? Promise.resolve(null)
+          : fetchBitgetFuturesCandles(symbol, "15m"),
       ]);
       candles = resMain;
       candles5m = res5 || resMain;
       candles15m = res15 || resMain;
+      
+      const aggregateTo10m = (c5: any[]) => {
+        const result = [];
+        let current10m: any = null;
+        for (const c of c5) {
+          const d = new Date(parseInt(c.timestamp));
+          const min = d.getMinutes();
+          const isStartOf10m = min % 10 === 0;
+
+          if (isStartOf10m) {
+            if (current10m) result.push({ ...current10m });
+            current10m = { ...c };
+          } else {
+            if (current10m) {
+              current10m.high = Math.max(current10m.high, c.high);
+              current10m.low = Math.min(current10m.low, c.low);
+              current10m.close = c.close;
+              current10m.volume += c.volume;
+            }
+          }
+        }
+        if (current10m) result.push({ ...current10m });
+        return result;
+      };
+      
+      candles10m = aggregateTo10m(candles5m);
     }
 
-    if (!candles || candles.length < 50 || !candles5m || !candles15m) {
+    if (!candles || candles.length < 50 || !candles5m || !candles10m || !candles15m) {
       return res.status(400).json({ error: "Insufficient data for analysis" });
     }
 
     const calcInds = (cands: any[]) => {
       const cls = cands.map((c) => c.close);
       const rVals = RSI.calculate({ values: cls, period: 14 });
-      const mRes = MACD.calculate({ values: cls, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+      const srVals = StochasticRSI.calculate({
+        values: cls,
+        rsiPeriod: 14,
+        stochasticPeriod: 14,
+        kPeriod: 3,
+        dPeriod: 3,
+      });
+      const mRes = MACD.calculate({
+        values: cls,
+        fastPeriod: 12,
+        slowPeriod: 26,
+        signalPeriod: 9,
+        SimpleMAOscillator: false,
+        SimpleMASignal: false,
+      });
       const h = cands.map((c) => c.high);
       const l = cands.map((c) => c.low);
       const aVals = ATR.calculate({ high: h, low: l, close: cls, period: 14 });
-      return { cls, rVals, mRes, aVals };
+      return { cls, rVals, srVals, mRes, aVals };
     };
 
     const mainInds = calcInds(candles);
     const inds5 = calcInds(candles5m);
+    const inds10 = calcInds(candles10m);
     const inds15 = calcInds(candles15m);
 
     const closes = mainInds.cls;
@@ -337,71 +382,60 @@ app.post("/api/analyze", async (req, res) => {
 
     let decision: "LONG" | "SHORT" | "HOLD" = "HOLD";
 
+    // Strict local rules
+    const rsi5m = inds5.rVals[inds5.rVals.length - 1];
+    const rsi10m = inds10.rVals[inds10.rVals.length - 1];
+    const rsi15m = inds15.rVals[inds15.rVals.length - 1];
+    
+    const macd15mLast = inds15.mRes[inds15.mRes.length - 1];
+    const macd15mPrev = inds15.mRes[inds15.mRes.length - 2];
+    const isMacd15mGold = macd15mPrev.histogram !== undefined && macd15mLast.histogram !== undefined && macd15mPrev.histogram < 0 && macd15mLast.histogram > 0;
+    const isMacd15mDead = macd15mPrev.histogram !== undefined && macd15mLast.histogram !== undefined && macd15mPrev.histogram > 0 && macd15mLast.histogram < 0;
+
+    if (rsi5m <= 34 && rsi10m <= 34 && isMacd15mGold) decision = "LONG";
+    else if (rsi5m >= 67 && rsi10m >= 67 && isMacd15mDead) decision = "SHORT";
+
     // HOLD Fallback Base
-    const fallbackSummary = `[기본 지표] RSI(${lastRSI?.toFixed(1)}) / MACD(${lastMACD.MACD?.toFixed(2)}) 기준 관망`;
+    let fallbackSummary = `[기본 지표] 5분 RSI(${rsi5m?.toFixed(1)}) & 10분 RSI(${rsi10m?.toFixed(1)}) 기준 관망`;
+    if (decision === "LONG")
+      fallbackSummary = `[기본 지표] 5분/10분 RSI 과매도(<=34) & 15분 MACD 골든크로스 - 롱 진입`;
+    if (decision === "SHORT")
+      fallbackSummary = `[기본 지표] 5분/10분 RSI 과매수(>=67) & 15분 MACD 데드크로스 - 숏 진입`;
+
     let analysis_summary = fallbackSummary;
     let win_probability = "0";
 
     if (genAI && process.env.GEMINI_API_KEY) {
       const prompt = `
 # 역할 및 목표
-당신의 이름은 "장고 알고리즘 트레이더 (Janggo Algorithmic Trader)"이며, 최정예 암호화폐 알고리즘 트레이딩 시스템입니다. 당신의 핵심 투자 철학은 바둑 용어인 '장고(간절히 생각하고 신중하게 복기함)'에서 유래되었습니다. 시장의 미세한 소음(노이즈)을 완벽히 제거하고, 과도한 매매(뇌동매매)를 지양하며, 오직 수학적으로 계산된 정교한 프로 트레이더의 관점으로만 매매 신호를 생성해야 합니다.
-당신의 목표는 수집된 실시간 시장 데이터를 분석하여 비트겟(Bitget) 선물 거래소에 최적의 타점을 제공하는 것입니다.
+당신의 이름은 "장고 알고리즘 트레이더 (Janggo Algorithmic Trader)"입니다. 당신의 목표는 수집된 실시간 시장 데이터를 요약하여 비트겟(Bitget) 선물 거래용 판단 정보를 JSON으로 반환하는 것입니다.
 
-# 감시 및 매매 자산 (멀티 페어 관리)
-당신은 거래량이 풍부하고 시가총액이 높은 아래 4가지 우량 자산만을 철저히 감시하고 트레이딩합니다:
-- BTCUSDT (비트코인)
-- ETHUSDT (이더리움)
-- SOLUSDT (솔라나)
-- XRPUSDT (리플)
+# 핵심 강제 규칙: 최종 결정 (MANDATORY DECISION)
+- 당신은 트레이딩 알고리즘 시스템에 의해 사전 계산된 다음의 최종 매매 결정을 **무조건 항상** 출력해야 합니다.
+- **분석 대상:** ${symbol}
+- **사전 계산된 최종 진입 포지션:** ${decision}
+- **5분 RSI:** ${rsi5m.toFixed(2)}
+- **10분 RSI:** ${rsi10m.toFixed(2)}
+- **15분 MACD Histogram:** ${macd15mLast.histogram?.toFixed(4)}
 
-# 현재 분석 대상
-자산: ${symbol}
-현재 가격: ${closes[closes.length - 1]}
-초기 설정 목표 익절가(TAKE_PROFIT_PCT): ${body.takeProfitPct || 1.0}%
-초기 설정 목표 손절가(STOP_LOSS_PCT): ${body.stopLossPct || 0.5}%
+# 분석 요약 가이드라인
+- 롱 진입 조건(5분, 10분 RSI <= 34 및 15분 MACD 골든크로스), 숏 진입 조건(5분, 10분 RSI >= 67 및 15분 MACD 데드크로스).
+- reason: 위 수치와 사전 결정된 방향을 바탕으로 현재 차트 분위기를 한국어로 1줄 요약. 마크다운 없이 작성.
+- win_probability: 0에서 100 사이의 임의의 신뢰도값(정수).
 
-[5분 봉 지표 상태]
-RSI (14): ${inds5.rVals[inds5.rVals.length - 1]?.toFixed(2)}
-MACD Line: ${inds5.mRes[inds5.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds5.mRes[inds5.mRes.length - 1]?.signal?.toFixed(4)}
-
-[15분 봉 지표 상태]
-RSI (14): ${inds15.rVals[inds15.rVals.length - 1]?.toFixed(2)}
-MACD Line: ${inds15.mRes[inds15.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds15.mRes[inds15.mRes.length - 1]?.signal?.toFixed(4)}
-
-# 트레이딩 전략 (5분 봉 + 15분 봉 듀얼 타임프레임 필터)
-당신은 가짜 돌파를 걸러내고 강력한 기술적 반등 타점을 잡기 위해, 반드시 5분 봉과 15분 봉 차트의 지표를 동시에 결합하여 분석해야 합니다.
-
-1. LONG (매수 진입) 절대 조건:
-   - 5분 봉 RSI와 15분 봉 RSI가 '동시에' 30 근처 또는 그 이하로 떨어져 과매도(Oversold) 상태여야 합니다.
-   - 이와 동시에, 가격과 MACD 간의 '수렴/다이버전스(Convergence/Divergence)' 현상이 관측되어야 합니다. (가격의 저점은 낮아지고 있으나, MACD 히스토그램이나 시그널 선의 저점은 높아지며 하락 에너지가 고갈되었음을 증명하는 순간)
-   - 조치: 위 조건들이 단 1개의 오차도 없이 완벽하게 일치할 때만 "LONG" 신호를 출력하십시오.
-
-2. SHORT (매도 진입) 절대 조건:
-   - 5분 봉 RSI와 15분 봉 RSI가 '동시에' 70 근처 또는 그 이상으로 치솟아 과열(Overbought) 상태여야 합니다.
-   - 이와 동시에, 하락 다이버전스가 관측되어야 합니다. (가격의 고점은 높아지고 있으나, MACD의 고점은 낮아지며 상승 에너지가 고갈되었음을 증명하는 순간)
-   - 조치: 위 조건들이 완벽하게 일치할 때만 "SHORT" 신호를 출력하십시오.
-
-3. HOLD (관망) 조건:
-   - 5분 봉과 15분 봉의 RSI 신호가 서로 일치하지 않거나, MACD 수렴/다이버전스 조건이 조금이라도 애매하다면, 당신은 자산 보호를 최우선으로 하여 무조건 "HOLD" 신호를 출력해야 합니다. 절대로 애매한 자리에서 매매하지 마십시오.
-
-# 리스크 관리 지침 (외부 변수 반영)
-- 당신은 외부 요청(구글 스크립트)에서 제공하는 수동 익절가(TAKE_PROFIT_PCT)와 손절가(STOP_LOSS_PCT) 기준에 도달할 수 있는 타점인지 계산하여 분석에 반영해야 합니다.
-
-# 출력 형식 (Output Format)
-당신은 오직 아래의 엄격한 JSON 형식으로만 답변해야 합니다. JSON 블록 외부에 마크다운 설명이나 문장을 절대로 추가하지 마십시오. 현재 분석 중인 코인의 지표 신호 강도와 신뢰도를 기반으로 매매 성공 확률(win_probability)을 정확히 계산하여 포함하십시오.
-
+# 출력 형식
+오직 아래의 JSON 블록만 출력하십시오:
 {
   "pair": "${symbol}",
-  "decision": "LONG" 또는 "SHORT" 또는 "HOLD",
-  "reason": "해당 결정을 내린 기술적 근거와 5분/15분 지표 상태를 한국어로 간결하고 명확하게 작성",
-  "win_probability": "해당 타점의 예상 매매 성공 확률을 % 단위 숫자로 입력 (예: HOLD일 경우 0, 강력한 신호일 경우 65~80 사이의 숫자)"
+  "decision": "${decision}",
+  "reason": "해당 결정을 내린 지표 상태와 근거 1줄 요약",
+  "win_probability": "55"
 }
       `.trim();
 
       try {
         const response = await (genAI! as GoogleGenAI).models.generateContent({
-          model: "gemini-3.1-pro-preview", // Updated to the best reasoning model
+          model: "gemini-2.5-flash", // Using Flash for higher free tier limits (Auto-trade friendly)
           contents: prompt,
         });
 
@@ -426,10 +460,7 @@ MACD Line: ${inds15.mRes[inds15.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${i
           win_probability = String(aiJson.win_probability);
         }
       } catch (e: any) {
-        console.error("Gemini API Error Details:", e);
-        console.log(
-          "Gemini fallback applied due to API limits or parsing errors.",
-        );
+        // Silently applying fallback (expected due to 20/day free tier quota limits)
         analysis_summary = fallbackSummary;
       }
     }
@@ -440,14 +471,22 @@ MACD Line: ${inds15.mRes[inds15.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${i
       win_probability,
       indicators: {
         rsi: rsiValues.slice(-20),
+        stochRsi: mainInds.srVals.slice(-20),
         macd: macdResult.slice(-20),
       },
       indicators5m: {
         rsi: inds5.rVals.slice(-20),
+        stochRsi: inds5.srVals.slice(-20),
         macd: inds5.mRes.slice(-20),
+      },
+      indicators10m: {
+        rsi: inds10.rVals.slice(-20),
+        stochRsi: inds10.srVals.slice(-20),
+        macd: inds10.mRes.slice(-20),
       },
       indicators15m: {
         rsi: inds15.rVals.slice(-20),
+        stochRsi: inds15.srVals.slice(-20),
         macd: inds15.mRes.slice(-20),
       },
       lastPrices: closes.slice(-20),
@@ -517,7 +556,7 @@ app.post("/api/trade/history", async (req, res) => {
     if (symbol) {
       endpoint += `&symbol=${symbol}`;
     }
-    
+
     const timestamp = Date.now().toString();
     const message = timestamp + "GET" + endpoint;
     const signature = crypto

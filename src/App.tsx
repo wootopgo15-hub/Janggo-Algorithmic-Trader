@@ -21,6 +21,10 @@ import {
   ExternalLink,
   Info,
   Trash2,
+  X,
+  Activity,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -64,6 +68,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSignalDiagnostic, setShowSignalDiagnostic] = useState(false);
 
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
@@ -204,8 +209,7 @@ export default function App() {
 
   const lastSignalRef = useRef<Record<string, Decision>>({});
 
-  const effectiveApiUrl =
-    customUrl || window.location.origin.replace(/\/+$/, "");
+  const effectiveApiUrl = window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
  * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.8.2)
@@ -218,7 +222,7 @@ export default function App() {
  * 2. 배포가 완료된 후 발급되는 외부 접속 주소(URL)를 복사
  * 3. 아래 API_URL 사이에 해당 주소를 붙여넣으세요.
  */
-const API_URL = "${effectiveApiUrl}"; // 여기에 배포된 Vercel/Cloud Run 주소를 붙여넣으세요.
+const API_URL = "${customUrl || effectiveApiUrl}"; // 여기에 배포된 Vercel/Cloud Run 주소를 붙여넣으세요.
 const SYMBOL = "${symbol}"; 
 const SIZE = "${orderSize}";
 const TAKE_PROFIT = "${takeProfit}";
@@ -379,7 +383,7 @@ function main() {
     isAuto: boolean = false,
     customTp?: string,
     customSl?: string,
-    tradeSymbol?: string
+    tradeSymbol?: string,
   ) => {
     try {
       const activeTp = customTp ?? takeProfit;
@@ -445,22 +449,24 @@ function main() {
 
   const runAnalysisCycle = async () => {
     // 1. Target symbols for the cycle
-    const targets = isAutoTrade ? ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"] : [symbol];
-    
+    const targets = isAutoTrade
+      ? ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
+      : [symbol];
+
     // UI Loading state only if we are querying the active symbol and it has no data yet
     if (!analysis) setLoading(true);
     setError(null);
-    
+
     for (const tSymbol of targets) {
       try {
         const response = await fetch(effectiveApiUrl + "/api/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            symbol: tSymbol, 
-            granularity, 
-            takeProfitPct: takeProfit, 
-            stopLossPct: stopLoss 
+          body: JSON.stringify({
+            symbol: tSymbol,
+            granularity,
+            takeProfitPct: takeProfit,
+            stopLossPct: stopLoss,
           }),
         });
 
@@ -477,7 +483,8 @@ function main() {
 
         const data = await response.json();
         if (!response.ok) {
-          if (tSymbol === symbol) throw new Error(data.error || "Analysis failed");
+          if (tSymbol === symbol)
+            throw new Error(data.error || "Analysis failed");
           else continue;
         }
 
@@ -489,7 +496,8 @@ function main() {
         // Auto Trading Logic
         const currentCacheKey = `${tSymbol}_${granularity}`;
         const isFirstView = !(currentCacheKey in lastSignalRef.current);
-        const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
+        const previousDecision =
+          lastSignalRef.current[currentCacheKey] || "HOLD";
 
         if (
           !isFirstView &&
@@ -497,7 +505,14 @@ function main() {
           data.decision !== "HOLD" &&
           data.decision !== previousDecision
         ) {
-          executeTrade(data.decision, orderSize, true, undefined, undefined, tSymbol);
+          executeTrade(
+            data.decision,
+            orderSize,
+            true,
+            undefined,
+            undefined,
+            tSymbol,
+          );
         }
 
         // Update ref anyway so it tracks properly even if auto trade is off
@@ -591,12 +606,25 @@ function main() {
           let hasNew = false;
 
           allHistData.forEach((pos: any) => {
-            const posSymbol = pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
-            const posId = pos.posId || pos.positionId || pos.tradeId || (posSymbol + "_" + (pos.cTime || pos.uTime || pos.closeTime || Math.random().toString()));
+            const posSymbol =
+              pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
+            const posId =
+              pos.posId ||
+              pos.positionId ||
+              pos.tradeId ||
+              posSymbol +
+                "_" +
+                (pos.cTime ||
+                  pos.uTime ||
+                  pos.closeTime ||
+                  Math.random().toString());
             const newCloseId = posId + "_close";
-            
+
             // Check if this closed position already exists in prev logs OR newLogsToAdd
-            if (!prev.some(l => l.id === newCloseId) && !newLogsToAdd.some(l => l.id === newCloseId)) {
+            if (
+              !prev.some((l) => l.id === newCloseId) &&
+              !newLogsToAdd.some((l) => l.id === newCloseId)
+            ) {
               const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
               if (pnlVal > 0) addedWins++;
               else if (pnlVal < 0) addedLosses++;
@@ -609,8 +637,20 @@ function main() {
                 symbol: posSymbol,
                 amount: pos.closeTotalPos || "0",
                 timestamp:
-                  pos.uTime || pos.cTime || pos.utime || pos.ctime || pos.closeTime
-                    ? new Date(parseInt(pos.uTime || pos.cTime || pos.utime || pos.ctime || pos.closeTime)).toISOString()
+                  pos.uTime ||
+                  pos.cTime ||
+                  pos.utime ||
+                  pos.ctime ||
+                  pos.closeTime
+                    ? new Date(
+                        parseInt(
+                          pos.uTime ||
+                            pos.cTime ||
+                            pos.utime ||
+                            pos.ctime ||
+                            pos.closeTime,
+                        ),
+                      ).toISOString()
                     : new Date().toISOString(),
                 status: "SUCCESS",
                 pnl: pnlVal.toFixed(2),
@@ -628,44 +668,86 @@ function main() {
               lossCount: prevParams.lossCount + addedLosses,
               totalProfit: prevParams.totalProfit + addedProfit,
             }));
-            return [...newLogsToAdd, ...prev].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50);
+            return [...newLogsToAdd, ...prev]
+              .sort(
+                (a, b) =>
+                  new Date(b.timestamp).getTime() -
+                  new Date(a.timestamp).getTime(),
+              )
+              .slice(0, 50);
           }
           return prev;
         });
       }
 
       if (fetchPositionsSuccess) {
-        const currentOpenPositions = allPosData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
-        
-        const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
-          const posSymbol = pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
-          const side: "LONG" | "SHORT" = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
-          const posId = pos.posId || pos.positionId || pos.tradeId || (posSymbol + "_" + side);
-          const entryPriceSource = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || pos.openPrice || "0";
-          return {
-            id: posId + "_open",
-            side: side,
-            symbol: posSymbol,
-            amount: pos.total || pos.baseVolume || "0",
-            timestamp: pos.cTime || pos.uTime || pos.ctime || pos.utime ? new Date(parseInt(pos.cTime || pos.uTime || pos.ctime || pos.utime)).toISOString() : new Date().toISOString(),
-            status: "SUCCESS" as const,
-            entryPrice: parseFloat(entryPriceSource),
-            pnl: pos.unrealizedPL || pos.unrealizedPnl || "0",
-            isClose: false,
-            isOpenPos: true,
-          };
-        }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        const currentOpenPositions = allPosData.filter(
+          (pos: any) => parseFloat(pos.total || pos.available || "0") > 0,
+        );
+
+        const newOpenLogs: TradeLog[] = currentOpenPositions
+          .map((pos) => {
+            const posSymbol =
+              pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
+            const side: "LONG" | "SHORT" =
+              pos.holdSide === "long" || pos.holdSide === "LONG"
+                ? "LONG"
+                : "SHORT";
+            const posId =
+              pos.posId ||
+              pos.positionId ||
+              pos.tradeId ||
+              posSymbol + "_" + side;
+            const entryPriceSource =
+              pos.openPriceAvg ||
+              pos.averageOpenPrice ||
+              pos.openAvgPrice ||
+              pos.openPrice ||
+              "0";
+            return {
+              id: posId + "_open",
+              side: side,
+              symbol: posSymbol,
+              amount: pos.total || pos.baseVolume || "0",
+              timestamp:
+                pos.cTime || pos.uTime || pos.ctime || pos.utime
+                  ? new Date(
+                      parseInt(
+                        pos.cTime || pos.uTime || pos.ctime || pos.utime,
+                      ),
+                    ).toISOString()
+                  : new Date().toISOString(),
+              status: "SUCCESS" as const,
+              entryPrice: parseFloat(entryPriceSource),
+              pnl: pos.unrealizedPL || pos.unrealizedPnl || "0",
+              isClose: false,
+              isOpenPos: true,
+            };
+          })
+          .sort(
+            (a, b) =>
+              new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+          );
 
         setLogs((prev) => {
           let mergedLogs = [...prev];
-          
-          newOpenLogs.forEach(openLog => {
+
+          newOpenLogs.forEach((openLog) => {
             const existingOpenIndex = mergedLogs.findIndex(
-              l => !l.isClose && l.isOpenPos && l.symbol === openLog.symbol && l.side === openLog.side
+              (l) =>
+                !l.isClose &&
+                l.isOpenPos &&
+                l.symbol === openLog.symbol &&
+                l.side === openLog.side,
             );
-            
+
             const existingLimitIndex = mergedLogs.findIndex(
-              l => !l.isClose && !l.isOpenPos && l.status === "SUCCESS" && l.symbol === openLog.symbol && l.side === openLog.side
+              (l) =>
+                !l.isClose &&
+                !l.isOpenPos &&
+                l.status === "SUCCESS" &&
+                l.symbol === openLog.symbol &&
+                l.side === openLog.side,
             );
 
             if (existingOpenIndex !== -1) {
@@ -673,7 +755,9 @@ function main() {
                 ...mergedLogs[existingOpenIndex],
                 pnl: openLog.pnl,
                 amount: openLog.amount,
-                entryPrice: openLog.entryPrice || mergedLogs[existingOpenIndex].entryPrice,
+                entryPrice:
+                  openLog.entryPrice ||
+                  mergedLogs[existingOpenIndex].entryPrice,
               };
             } else if (existingLimitIndex !== -1) {
               mergedLogs[existingLimitIndex] = {
@@ -682,7 +766,9 @@ function main() {
                 isOpenPos: true,
                 pnl: openLog.pnl,
                 amount: openLog.amount,
-                entryPrice: openLog.entryPrice || mergedLogs[existingLimitIndex].entryPrice,
+                entryPrice:
+                  openLog.entryPrice ||
+                  mergedLogs[existingLimitIndex].entryPrice,
               };
             } else {
               mergedLogs.push(openLog);
@@ -690,20 +776,31 @@ function main() {
           });
 
           // Cleanup orphaned limits if position exists, but generally just re-sort and remove duplicates
-          const openSymbols = newOpenLogs.map(l => l.symbol);
+          const openSymbols = newOpenLogs.map((l) => l.symbol);
           mergedLogs = mergedLogs.filter((l) => {
-             // Remove any old OPEN positions that were closed
-             if (!l.isClose && l.isOpenPos) {
-                 return newOpenLogs.some(nl => nl.id === l.id);
-             }
-             // Remove any orphaned LIMIT if an open pos now exists for this symbol (which would have upgraded it if side matched)
-             if (!l.isClose && !l.isOpenPos && l.status === "SUCCESS" && openSymbols.includes(l.symbol)) {
-                 return false;
-             }
-             return true;
+            // Remove any old OPEN positions that were closed
+            if (!l.isClose && l.isOpenPos) {
+              return newOpenLogs.some((nl) => nl.id === l.id);
+            }
+            // Remove any orphaned LIMIT if an open pos now exists for this symbol (which would have upgraded it if side matched)
+            if (
+              !l.isClose &&
+              !l.isOpenPos &&
+              l.status === "SUCCESS" &&
+              openSymbols.includes(l.symbol)
+            ) {
+              return false;
+            }
+            return true;
           });
 
-          return mergedLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50);
+          return mergedLogs
+            .sort(
+              (a, b) =>
+                new Date(b.timestamp).getTime() -
+                new Date(a.timestamp).getTime(),
+            )
+            .slice(0, 50);
         });
       }
     } catch (e) {
@@ -1370,7 +1467,9 @@ function main() {
                     <div className="grid grid-cols-2 gap-3 mb-2">
                       {/* 5m Indicators */}
                       <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
-                        <div className="absolute top-0 right-0 bg-blue-500/10 text-blue-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">5m</div>
+                        <div className="absolute top-0 right-0 bg-blue-500/10 text-blue-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">
+                          5m
+                        </div>
                         <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
                           RSI / MACD
                         </span>
@@ -1379,38 +1478,61 @@ function main() {
                             className={cn(
                               "text-lg font-mono font-bold flex items-center",
                               analysis?.indicators5m &&
-                                (analysis.indicators5m.rsi[analysis.indicators5m.rsi.length - 1] < 30
+                                (analysis.indicators5m.rsi[
+                                  analysis.indicators5m.rsi.length - 1
+                                ] < 30
                                   ? "text-emerald-400"
-                                  : analysis.indicators5m.rsi[analysis.indicators5m.rsi.length - 1] > 70
+                                  : analysis.indicators5m.rsi[
+                                        analysis.indicators5m.rsi.length - 1
+                                      ] > 70
                                     ? "text-rose-400"
-                                    : "text-slate-200")
+                                    : "text-slate-200"),
                             )}
                           >
-                            {analysis?.indicators5m ? analysis.indicators5m.rsi[analysis.indicators5m.rsi.length - 1].toFixed(2) : <RefreshCw className="w-4 h-4 animate-spin opacity-50" />}
+                            {analysis?.indicators5m ? (
+                              analysis.indicators5m.rsi[
+                                analysis.indicators5m.rsi.length - 1
+                              ].toFixed(2)
+                            ) : (
+                              <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
+                            )}
                           </span>
                           <span
                             className={cn(
                               "text-[10px] font-mono font-bold uppercase",
-                              analysis?.indicators5m && analysis.indicators5m.macd.length >= 2 &&
-                                (analysis.indicators5m.macd[analysis.indicators5m.macd.length - 1]?.MACD! >
-                                  analysis.indicators5m.macd[analysis.indicators5m.macd.length - 1]?.signal!
+                              analysis?.indicators5m &&
+                                analysis.indicators5m.macd.length >= 2 &&
+                                (analysis.indicators5m.macd[
+                                  analysis.indicators5m.macd.length - 1
+                                ]?.MACD! >
+                                analysis.indicators5m.macd[
+                                  analysis.indicators5m.macd.length - 1
+                                ]?.signal!
                                   ? "text-emerald-400"
-                                  : "text-rose-400")
+                                  : "text-rose-400"),
                             )}
                           >
-                            {analysis?.indicators5m ? (
-                              analysis.indicators5m.macd.length >= 2 ? (
-                                analysis.indicators5m.macd[analysis.indicators5m.macd.length - 1]?.MACD! >
-                                analysis.indicators5m.macd[analysis.indicators5m.macd.length - 1]?.signal! ? "GOLD" : "DEAD"
-                              ) : "CALC"
-                            ) : ""}
+                            {analysis?.indicators5m
+                              ? analysis.indicators5m.macd.length >= 2
+                                ? analysis.indicators5m.macd[
+                                    analysis.indicators5m.macd.length - 1
+                                  ]?.MACD! >
+                                  analysis.indicators5m.macd[
+                                    analysis.indicators5m.macd.length - 1
+                                  ]?.signal!
+                                  ? "GOLD"
+                                  : "DEAD"
+                                : "CALC"
+                              : ""}
                           </span>
                         </div>
                       </div>
 
                       {/* 15m Indicators */}
                       <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
-                        <div className="absolute top-0 right-0 bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">15m</div>
+                        <div className="absolute top-0 right-0 bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">
+                          15m
+                        </div>
                         <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
                           RSI / MACD
                         </span>
@@ -1419,31 +1541,52 @@ function main() {
                             className={cn(
                               "text-lg font-mono font-bold flex items-center",
                               analysis?.indicators15m &&
-                                (analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1] < 30
+                                (analysis.indicators15m.rsi[
+                                  analysis.indicators15m.rsi.length - 1
+                                ] < 30
                                   ? "text-emerald-400"
-                                  : analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1] > 70
+                                  : analysis.indicators15m.rsi[
+                                        analysis.indicators15m.rsi.length - 1
+                                      ] > 70
                                     ? "text-rose-400"
-                                    : "text-slate-200")
+                                    : "text-slate-200"),
                             )}
                           >
-                            {analysis?.indicators15m ? analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1].toFixed(2) : <RefreshCw className="w-4 h-4 animate-spin opacity-50" />}
+                            {analysis?.indicators15m ? (
+                              analysis.indicators15m.rsi[
+                                analysis.indicators15m.rsi.length - 1
+                              ].toFixed(2)
+                            ) : (
+                              <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
+                            )}
                           </span>
                           <span
                             className={cn(
                               "text-[10px] font-mono font-bold uppercase",
-                              analysis?.indicators15m && analysis.indicators15m.macd.length >= 2 &&
-                                (analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.MACD! >
-                                  analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.signal!
+                              analysis?.indicators15m &&
+                                analysis.indicators15m.macd.length >= 2 &&
+                                (analysis.indicators15m.macd[
+                                  analysis.indicators15m.macd.length - 1
+                                ]?.MACD! >
+                                analysis.indicators15m.macd[
+                                  analysis.indicators15m.macd.length - 1
+                                ]?.signal!
                                   ? "text-emerald-400"
-                                  : "text-rose-400")
+                                  : "text-rose-400"),
                             )}
                           >
-                            {analysis?.indicators15m ? (
-                              analysis.indicators15m.macd.length >= 2 ? (
-                                analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.MACD! >
-                                analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.signal! ? "GOLD" : "DEAD"
-                              ) : "CALC"
-                            ) : ""}
+                            {analysis?.indicators15m
+                              ? analysis.indicators15m.macd.length >= 2
+                                ? analysis.indicators15m.macd[
+                                    analysis.indicators15m.macd.length - 1
+                                  ]?.MACD! >
+                                  analysis.indicators15m.macd[
+                                    analysis.indicators15m.macd.length - 1
+                                  ]?.signal!
+                                  ? "GOLD"
+                                  : "DEAD"
+                                : "CALC"
+                              : ""}
                           </span>
                         </div>
                       </div>
@@ -1875,16 +2018,27 @@ function main() {
                       <History className="w-4 h-4 text-slate-500" />
                       Execution History
                     </h3>
-                    <button
-                      onClick={() => {
-                        if (fetchBalanceRef.current) fetchBalanceRef.current();
-                      }}
-                      title="신호 강제 새로고침"
-                      className="p-1.5 text-slate-400 hover:text-white bg-[#21262d] border border-[#30363d] rounded-md hover:bg-[#30363d] transition-all flex items-center gap-1 text-[10px] uppercase font-mono"
-                    >
-                      <RefreshCw className="w-3 h-3" />
-                      신호 확인
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowSignalDiagnostic(true)}
+                        title="모든 타임프레임 신호 상태 확인"
+                        className="px-2 py-1.5 text-blue-400 hover:text-white bg-blue-500/10 border border-blue-500/20 rounded-md hover:bg-blue-500/20 transition-all flex items-center gap-1.5 text-[10px] font-bold uppercase font-mono"
+                      >
+                        <Activity className="w-3 h-3" />
+                        신호 확인 (체크)
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (fetchBalanceRef.current)
+                            fetchBalanceRef.current();
+                        }}
+                        title="거래 내역 강제 동기화"
+                        className="px-2 py-1.5 text-slate-400 hover:text-white bg-[#21262d] border border-[#30363d] rounded-md hover:bg-[#30363d] transition-all flex items-center gap-1.5 text-[10px] uppercase font-mono"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span className="hidden sm:inline">동기화</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
@@ -1894,145 +2048,221 @@ function main() {
                         <p className="text-sm">No trades executed yet</p>
                       </div>
                     ) : (
-                      [...logs].sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((log) => (
-                        <div
-                          key={log.id}
-                          onClick={() => {
-                            setEditingLog(log);
-                            setEditTakeProfit(log.takeProfit || "");
-                            setEditStopLoss(log.stopLoss || "");
-                          }}
-                          className={cn(
-                            "flex flex-col p-4 bg-[#0d1117] border rounded-xl group transition-all cursor-pointer",
-                            log.isOpenPos ? "border-blue-500/30 hover:border-blue-500/50" : "border-[#30363d] hover:border-slate-500"
-                          )}
-                        >
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={cn(
-                                  "p-2 rounded-lg",
-                                  log.isClose
-                                    ? "bg-slate-500/10 text-slate-400"
-                                    : log.isOpenPos
-                                      ? "bg-blue-500/10 text-blue-400"
-                                      : log.side === "LONG"
-                                        ? "bg-emerald-500/10 text-emerald-500"
-                                        : "bg-rose-500/10 text-rose-500",
-                                )}
-                              >
-                                {log.isClose ? (
-                                  <History className="w-4 h-4" />
-                                ) : log.isOpenPos && log.side === "LONG" ? (
-                                  <TrendingUp className="w-4 h-4" />
-                                ) : log.isOpenPos && log.side === "SHORT" ? (
-                                  <TrendingDown className="w-4 h-4" />
-                                ) : log.side === "LONG" ? (
-                                  <TrendingUp className="w-4 h-4" />
-                                ) : (
-                                  <TrendingDown className="w-4 h-4" />
-                                )}
-                              </div>
-                              <div className="flex flex-col">
-                                <div className="text-sm font-bold flex items-center gap-2 text-slate-200">
-                                  {log.side} {log.symbol}
-                                  <span
-                                    className={cn(
-                                      "text-[9px] px-1.5 py-0.5 rounded font-mono font-bold tracking-widest",
-                                      log.isClose
-                                        ? "bg-slate-500/20 text-slate-400"
-                                        : log.isOpenPos
-                                          ? "bg-blue-500/20 text-blue-400 animate-pulse"
-                                          : log.status === "SUCCESS"
-                                            ? "bg-emerald-500/20 text-emerald-500"
-                                            : "bg-rose-500/20 text-rose-500",
-                                    )}
-                                  >
-                                    {log.isClose
-                                      ? "CLOSED"
+                      [...logs]
+                        .sort(
+                          (a, b) =>
+                            new Date(b.timestamp).getTime() -
+                            new Date(a.timestamp).getTime(),
+                        )
+                        .map((log) => (
+                          <div
+                            key={log.id}
+                            onClick={() => {
+                              setEditingLog(log);
+                              setEditTakeProfit(log.takeProfit || "");
+                              setEditStopLoss(log.stopLoss || "");
+                            }}
+                            className={cn(
+                              "flex flex-col p-4 bg-[#0d1117] border rounded-xl group transition-all cursor-pointer",
+                              log.isOpenPos
+                                ? "border-blue-500/30 hover:border-blue-500/50"
+                                : "border-[#30363d] hover:border-slate-500",
+                            )}
+                          >
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className={cn(
+                                    "p-2 rounded-lg",
+                                    log.isClose
+                                      ? "bg-slate-500/10 text-slate-400"
                                       : log.isOpenPos
-                                        ? "TRADING"
-                                        : log.status === "SUCCESS"
-                                          ? "LIMIT"
-                                          : log.status}
+                                        ? "bg-blue-500/10 text-blue-400"
+                                        : log.side === "LONG"
+                                          ? "bg-emerald-500/10 text-emerald-500"
+                                          : "bg-rose-500/10 text-rose-500",
+                                  )}
+                                >
+                                  {log.isClose ? (
+                                    <History className="w-4 h-4" />
+                                  ) : log.isOpenPos && log.side === "LONG" ? (
+                                    <TrendingUp className="w-4 h-4" />
+                                  ) : log.isOpenPos && log.side === "SHORT" ? (
+                                    <TrendingDown className="w-4 h-4" />
+                                  ) : log.side === "LONG" ? (
+                                    <TrendingUp className="w-4 h-4" />
+                                  ) : (
+                                    <TrendingDown className="w-4 h-4" />
+                                  )}
+                                </div>
+                                <div className="flex flex-col">
+                                  <div className="text-sm font-bold flex items-center gap-2 text-slate-200">
+                                    {log.side} {log.symbol}
+                                    <span
+                                      className={cn(
+                                        "text-[9px] px-1.5 py-0.5 rounded font-mono font-bold tracking-widest",
+                                        log.isClose
+                                          ? "bg-slate-500/20 text-slate-400"
+                                          : log.isOpenPos
+                                            ? "bg-blue-500/20 text-blue-400 animate-pulse"
+                                            : log.status === "SUCCESS"
+                                              ? "bg-emerald-500/20 text-emerald-500"
+                                              : "bg-rose-500/20 text-rose-500",
+                                      )}
+                                    >
+                                      {log.isClose
+                                        ? "CLOSED"
+                                        : log.isOpenPos
+                                          ? "TRADING"
+                                          : log.status === "SUCCESS"
+                                            ? "LIMIT"
+                                            : log.status}
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 font-mono mt-0.5 tracking-wider">
+                                    {(() => {
+                                      try {
+                                        const d = new Date(log.timestamp);
+                                        if (isNaN(d.getTime()))
+                                          return log.timestamp;
+                                        return d.toLocaleString(undefined, {
+                                          month: "short",
+                                          day: "numeric",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          second: "2-digit",
+                                        });
+                                      } catch (e) {
+                                        return log.timestamp;
+                                      }
+                                    })()}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                <span className="text-xs font-bold text-slate-300 font-mono">
+                                  {log.amount} USDT
+                                </span>
+                                <div
+                                  className="text-[9px] font-mono text-slate-600 truncate max-w-[80px]"
+                                  title={log.id}
+                                >
+                                  #
+                                  {log.id
+                                    .replace("_open", "")
+                                    .replace("_close", "")
+                                    .substring(0, 8)}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Order details grid */}
+                            {log.isClose ? (
+                              <div className="flex justify-between items-center p-3 bg-slate-500/5 rounded-lg border border-slate-500/10">
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">
+                                    Status
+                                  </span>
+                                  <span className="text-xs text-slate-300 font-mono">
+                                    Realized
                                   </span>
                                 </div>
-                                <div className="text-[10px] text-slate-500 font-mono mt-0.5 tracking-wider">
-                                  {(() => {
-                                    try {
-                                      const d = new Date(log.timestamp);
-                                      if (isNaN(d.getTime())) return log.timestamp;
-                                      return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-                                    } catch (e) {
-                                      return log.timestamp;
-                                    }
-                                  })()}
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">
+                                    Profit/Loss
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "text-sm font-bold font-mono",
+                                      parseFloat(log.pnl || "0") >= 0
+                                        ? "text-emerald-500"
+                                        : "text-rose-500",
+                                    )}
+                                  >
+                                    {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
+                                    {log.pnl} USDT
+                                  </span>
                                 </div>
                               </div>
-                            </div>
-                            <div className="flex flex-col items-end gap-1">
-                              <span className="text-xs font-bold text-slate-300 font-mono">{log.amount} USDT</span>
-                              <div className="text-[9px] font-mono text-slate-600 truncate max-w-[80px]" title={log.id}>
-                                #{log.id.replace('_open', '').replace('_close', '').substring(0, 8)}
+                            ) : log.isOpenPos ? (
+                              <div className="grid grid-cols-3 gap-2 p-3 bg-blue-500/5 rounded-lg border border-blue-500/20">
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">
+                                    Entry Price
+                                  </span>
+                                  <span className="text-xs font-bold text-blue-200 font-mono">
+                                    {log.entryPrice
+                                      ? `$${log.entryPrice}`
+                                      : "-"}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-end border-r border-blue-500/20 pr-2">
+                                  <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">
+                                    Unrealized PnL
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "text-xs font-bold font-mono",
+                                      parseFloat(log.pnl || "0") >= 0
+                                        ? "text-emerald-400"
+                                        : "text-rose-400",
+                                    )}
+                                  >
+                                    {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
+                                    {log.pnl} USDT
+                                  </span>
+                                </div>
+                                <div className="flex flex-col pl-2">
+                                  <div className="flex justify-between items-center w-full mb-1">
+                                    <span className="text-[8px] text-emerald-500/70 uppercase font-mono">
+                                      TP
+                                    </span>
+                                    <span className="text-[9px] text-emerald-400 font-mono">
+                                      {log.tpPrice ? `$${log.tpPrice}` : "-"}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between items-center w-full">
+                                    <span className="text-[8px] text-rose-500/70 uppercase font-mono">
+                                      SL
+                                    </span>
+                                    <span className="text-[9px] text-rose-400 font-mono">
+                                      {log.slPrice ? `$${log.slPrice}` : "-"}
+                                    </span>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="flex justify-between items-center p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">
+                                    Limit Entry
+                                  </span>
+                                  <span className="text-xs text-slate-300 font-mono">
+                                    {log.entryPrice
+                                      ? `$${log.entryPrice}`
+                                      : "-"}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[9px] text-emerald-500/70 uppercase font-mono mb-1">
+                                    Target TP
+                                  </span>
+                                  <span className="text-xs text-emerald-400 font-mono">
+                                    {log.tpPrice ? `$${log.tpPrice}` : "-"}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[9px] text-rose-500/70 uppercase font-mono mb-1">
+                                    Stop Loss
+                                  </span>
+                                  <span className="text-xs text-rose-400 font-mono">
+                                    {log.slPrice ? `$${log.slPrice}` : "-"}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
                           </div>
-
-                          {/* Order details grid */}
-                          {log.isClose ? (
-                            <div className="flex justify-between items-center p-3 bg-slate-500/5 rounded-lg border border-slate-500/10">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Status</span>
-                                <span className="text-xs text-slate-300 font-mono">Realized</span>
-                              </div>
-                              <div className="flex flex-col items-end">
-                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Profit/Loss</span>
-                                <span className={cn("text-sm font-bold font-mono", parseFloat(log.pnl || "0") >= 0 ? "text-emerald-500" : "text-rose-500")}>
-                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}{log.pnl} USDT
-                                </span>
-                              </div>
-                            </div>
-                          ) : log.isOpenPos ? (
-                            <div className="grid grid-cols-3 gap-2 p-3 bg-blue-500/5 rounded-lg border border-blue-500/20">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">Entry Price</span>
-                                <span className="text-xs font-bold text-blue-200 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
-                              </div>
-                              <div className="flex flex-col items-end border-r border-blue-500/20 pr-2">
-                                <span className="text-[9px] text-blue-500/70 uppercase font-mono mb-1">Unrealized PnL</span>
-                                <span className={cn("text-xs font-bold font-mono", parseFloat(log.pnl || "0") >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}{log.pnl} USDT
-                                </span>
-                              </div>
-                              <div className="flex flex-col pl-2">
-                                <div className="flex justify-between items-center w-full mb-1">
-                                  <span className="text-[8px] text-emerald-500/70 uppercase font-mono">TP</span>
-                                  <span className="text-[9px] text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "-"}</span>
-                                </div>
-                                <div className="flex justify-between items-center w-full">
-                                  <span className="text-[8px] text-rose-500/70 uppercase font-mono">SL</span>
-                                  <span className="text-[9px] text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "-"}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex justify-between items-center p-3 bg-[#161b22] rounded-lg border border-[#30363d]/50">
-                              <div className="flex flex-col">
-                                <span className="text-[9px] text-slate-500 uppercase font-mono mb-1">Limit Entry</span>
-                                <span className="text-xs text-slate-300 font-mono">{log.entryPrice ? `$${log.entryPrice}` : "-"}</span>
-                              </div>
-                              <div className="flex flex-col items-end">
-                                <span className="text-[9px] text-emerald-500/70 uppercase font-mono mb-1">Target TP</span>
-                                <span className="text-xs text-emerald-400 font-mono">{log.tpPrice ? `$${log.tpPrice}` : "-"}</span>
-                              </div>
-                              <div className="flex flex-col items-end">
-                                <span className="text-[9px] text-rose-500/70 uppercase font-mono mb-1">Stop Loss</span>
-                                <span className="text-xs text-rose-400 font-mono">{log.slPrice ? `$${log.slPrice}` : "-"}</span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ))
+                        ))
                     )}
                   </div>
                 </div>
@@ -2041,11 +2271,526 @@ function main() {
           )}
         </AnimatePresence>
 
+        {showSignalDiagnostic && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-[#0a0c10] border border-[#30363d] rounded-2xl w-full max-w-3xl overflow-hidden flex flex-col shadow-2xl">
+              <div className="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#161b22]">
+                <h3 className="text-sm font-bold font-mono flex items-center gap-2 text-white">
+                  <Activity className="w-4 h-4 text-blue-500" />
+                  실시간 신호 상태 진단 (SIGNAL DIAGNOSTICS)
+                </h3>
+                <button
+                  onClick={() => setShowSignalDiagnostic(false)}
+                  className="p-1 hover:bg-[#30363d] rounded-lg transition-colors text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
+                {/* 5m timeframe */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
+                    5분 봉 (5m Timeframe)
+                  </h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          RSI
+                        </span>
+                        {analysis?.indicators5m ? (
+                          analysis.indicators5m.rsi[
+                            analysis.indicators5m.rsi.length - 1
+                          ] <= 34 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators5m.rsi[
+                              analysis.indicators5m.rsi.length - 1
+                            ] >= 67 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators5m
+                          ? analysis.indicators5m.rsi[
+                              analysis.indicators5m.rsi.length - 1
+                            ].toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          Stoch RSI
+                        </span>
+                        {analysis?.indicators5m?.stochRsi ? (
+                          analysis.indicators5m.stochRsi[
+                            analysis.indicators5m.stochRsi.length - 1
+                          ].k <= 20 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators5m.stochRsi[
+                              analysis.indicators5m.stochRsi.length - 1
+                            ].k >= 80 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono flex items-end gap-1">
+                        {analysis?.indicators5m?.stochRsi
+                          ? analysis.indicators5m.stochRsi[
+                              analysis.indicators5m.stochRsi.length - 1
+                            ].k.toFixed(2)
+                          : "--"}
+                        <span className="text-xs text-slate-500 font-normal pb-1">
+                          K
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          MACD
+                        </span>
+                        {analysis?.indicators5m &&
+                        analysis.indicators5m.macd.length >= 2 ? (
+                          (() => {
+                            const last =
+                              analysis.indicators5m.macd[
+                                analysis.indicators5m.macd.length - 1
+                              ];
+                            const prev =
+                              analysis.indicators5m.macd[
+                                analysis.indicators5m.macd.length - 2
+                              ];
+                            const isGold =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram < 0 &&
+                              last.histogram > 0;
+                            const isDead =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram > 0 &&
+                              last.histogram < 0;
+
+                            if (isGold)
+                              return (
+                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (골든)
+                                </span>
+                              );
+                            if (isDead)
+                              return (
+                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (데드)
+                                </span>
+                              );
+                            return (
+                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                <Minus className="w-3 h-3" /> 대기 (진행중)
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators5m &&
+                        analysis.indicators5m.macd.length > 0
+                          ? (
+                              analysis.indicators5m.macd[
+                                analysis.indicators5m.macd.length - 1
+                              ].MACD || 0
+                            ).toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 10m timeframe */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
+                    10분 봉 (10m Timeframe)
+                  </h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          RSI
+                        </span>
+                        {analysis?.indicators10m ? (
+                          analysis.indicators10m.rsi[
+                            analysis.indicators10m.rsi.length - 1
+                          ] <= 34 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators10m.rsi[
+                              analysis.indicators10m.rsi.length - 1
+                            ] >= 67 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators10m
+                          ? analysis.indicators10m.rsi[
+                              analysis.indicators10m.rsi.length - 1
+                            ].toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          Stoch RSI
+                        </span>
+                        {analysis?.indicators10m?.stochRsi ? (
+                          analysis.indicators10m.stochRsi[
+                            analysis.indicators10m.stochRsi.length - 1
+                          ].k <= 20 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators10m.stochRsi[
+                              analysis.indicators10m.stochRsi.length - 1
+                            ].k >= 80 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono flex items-end gap-1">
+                        {analysis?.indicators10m?.stochRsi
+                          ? analysis.indicators10m.stochRsi[
+                              analysis.indicators10m.stochRsi.length - 1
+                            ].k.toFixed(2)
+                          : "--"}
+                        <span className="text-xs text-slate-500 font-normal pb-1">
+                          K
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          MACD
+                        </span>
+                        {analysis?.indicators10m &&
+                        analysis.indicators10m.macd.length >= 2 ? (
+                          (() => {
+                            const last =
+                              analysis.indicators10m.macd[
+                                analysis.indicators10m.macd.length - 1
+                              ];
+                            const prev =
+                              analysis.indicators10m.macd[
+                                analysis.indicators10m.macd.length - 2
+                              ];
+                            const isGold =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram < 0 &&
+                              last.histogram > 0;
+                            const isDead =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram > 0 &&
+                              last.histogram < 0;
+
+                            if (isGold)
+                              return (
+                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (골든)
+                                </span>
+                              );
+                            if (isDead)
+                              return (
+                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (데드)
+                                </span>
+                              );
+                            return (
+                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                <Minus className="w-3 h-3" /> 대기 (진행중)
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators10m &&
+                        analysis.indicators10m.macd.length > 0
+                          ? (
+                              analysis.indicators10m.macd[
+                                analysis.indicators10m.macd.length - 1
+                              ].MACD || 0
+                            ).toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 15m timeframe */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
+                    15분 봉 (15m Timeframe)
+                  </h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          RSI
+                        </span>
+                        {analysis?.indicators15m ? (
+                          analysis.indicators15m.rsi[
+                            analysis.indicators15m.rsi.length - 1
+                          ] <= 34 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators15m.rsi[
+                              analysis.indicators15m.rsi.length - 1
+                            ] >= 67 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators15m
+                          ? analysis.indicators15m.rsi[
+                              analysis.indicators15m.rsi.length - 1
+                            ].toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          Stoch RSI
+                        </span>
+                        {analysis?.indicators15m?.stochRsi ? (
+                          analysis.indicators15m.stochRsi[
+                            analysis.indicators15m.stochRsi.length - 1
+                          ].k <= 20 ? (
+                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
+                            </span>
+                          ) : analysis.indicators15m.stochRsi[
+                              analysis.indicators15m.stochRsi.length - 1
+                            ].k >= 80 ? (
+                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                              <Minus className="w-3 h-3" /> 대기 (중립구간)
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono flex items-end gap-1">
+                        {analysis?.indicators15m?.stochRsi
+                          ? analysis.indicators15m.stochRsi[
+                              analysis.indicators15m.stochRsi.length - 1
+                            ].k.toFixed(2)
+                          : "--"}
+                        <span className="text-xs text-slate-500 font-normal pb-1">
+                          K
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-[10px] uppercase font-mono text-slate-500">
+                          MACD
+                        </span>
+                        {analysis?.indicators15m &&
+                        analysis.indicators15m.macd.length >= 2 ? (
+                          (() => {
+                            const last =
+                              analysis.indicators15m.macd[
+                                analysis.indicators15m.macd.length - 1
+                              ];
+                            const prev =
+                              analysis.indicators15m.macd[
+                                analysis.indicators15m.macd.length - 2
+                              ];
+                            const isGold =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram < 0 &&
+                              last.histogram > 0;
+                            const isDead =
+                              prev.histogram !== undefined &&
+                              last.histogram !== undefined &&
+                              prev.histogram > 0 &&
+                              last.histogram < 0;
+
+                            if (isGold)
+                              return (
+                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (골든)
+                                </span>
+                              );
+                            if (isDead)
+                              return (
+                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                  <CheckCircle2 className="w-3 h-3" /> 정상
+                                  (데드)
+                                </span>
+                              );
+                            return (
+                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                                <Minus className="w-3 h-3" /> 대기 (진행중)
+                              </span>
+                            );
+                          })()
+                        ) : (
+                          <span className="text-[10px] text-slate-500">
+                            데이터 없음
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold font-mono">
+                        {analysis?.indicators15m &&
+                        analysis.indicators15m.macd.length > 0
+                          ? (
+                              analysis.indicators15m.macd[
+                                analysis.indicators15m.macd.length - 1
+                              ].MACD || 0
+                            ).toFixed(2)
+                          : "--"}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#21262d] border border-[#30363d] p-4 rounded-xl">
+                  <h4 className="text-[10px] uppercase font-mono text-slate-500 mb-2">
+                    Combined Signal Logic
+                  </h4>
+                  <p className="text-sm text-slate-300 leading-relaxed font-mono">
+                    <span className="text-emerald-400 font-bold">
+                      LONG 진입 조건:
+                    </span>{" "}
+                    5분 RSI &lt;= 34 &amp; 10분 RSI &lt;= 34 &amp; 15분 MACD
+                    골든크로스 동시 만족
+                    <br />
+                    <span className="text-rose-400 font-bold mt-1 inline-block">
+                      SHORT 진입 조건:
+                    </span>{" "}
+                    5분 RSI &gt;= 67 &amp; 10분 RSI &gt;= 67 &amp; 15분 MACD
+                    데드크로스 동시 만족
+                    <br />
+                    <br />
+                    <strong>현재 예측된 최종 포지션: </strong>
+                    {analysis ? (
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded font-bold ml-1",
+                          analysis.decision === "LONG"
+                            ? "bg-emerald-500/20 text-emerald-500"
+                            : analysis.decision === "SHORT"
+                              ? "bg-rose-500/20 text-rose-500"
+                              : "bg-slate-500/20 text-slate-400",
+                        )}
+                      >
+                        {analysis.decision}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 ml-1">계산 중...</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Footer info */}
         <footer className="text-center p-8">
           <p className="text-[#30363d] text-[10px] font-mono leading-relaxed max-w-2xl mx-auto">
-            [DEBUG] logs: {logs.length} | 
-            open: {logs.filter(l => l.isOpenPos).length} | close: {logs.filter(l => l.isClose).length}
+            [DEBUG] logs: {logs.length} | open:{" "}
+            {logs.filter((l) => l.isOpenPos).length} | close:{" "}
+            {logs.filter((l) => l.isClose).length}
             <br />
             STRATEGY_RULES: RSI_OVERSOLD_EXIT (30) OR MACD_GOLDEN_CROSS == LONG
             | RSI_OVERBOUGHT_FALLING (70) OR MACD_DEAD_CROSS == SHORT

@@ -28,11 +28,11 @@ export interface AnalysisResult {
     rsi: number[];
     macd: MACDResult[];
   };
-  indicators15m?: {
+  indicators5m?: {
     rsi: number[];
     macd: MACDResult[];
   };
-  indicators30m?: {
+  indicators15m?: {
     rsi: number[];
     macd: MACDResult[];
   };

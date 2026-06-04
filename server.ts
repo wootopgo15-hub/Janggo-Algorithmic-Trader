@@ -288,25 +288,25 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     let candles: any[];
+    let candles5m: any[];
     let candles15m: any[];
-    let candles30m: any[];
 
     if (customData) {
       candles = customData;
+      candles5m = customData;
       candles15m = customData;
-      candles30m = customData;
     } else {
-      const [resMain, res15, res30] = await Promise.all([
+      const [resMain, res5, res15] = await Promise.all([
         fetchBitgetFuturesCandles(symbol, granularity),
-        granularity === "15m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "15m"),
-        granularity === "30m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "30m")
+        granularity === "5m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "5m"),
+        granularity === "15m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "15m")
       ]);
       candles = resMain;
+      candles5m = res5 || resMain;
       candles15m = res15 || resMain;
-      candles30m = res30 || resMain;
     }
 
-    if (!candles || candles.length < 50 || !candles15m || !candles30m) {
+    if (!candles || candles.length < 50 || !candles5m || !candles15m) {
       return res.status(400).json({ error: "Insufficient data for analysis" });
     }
 
@@ -321,8 +321,8 @@ app.post("/api/analyze", async (req, res) => {
     };
 
     const mainInds = calcInds(candles);
+    const inds5 = calcInds(candles5m);
     const inds15 = calcInds(candles15m);
-    const inds30 = calcInds(candles30m);
 
     const closes = mainInds.cls;
     const rsiValues = mainInds.rVals;
@@ -361,29 +361,29 @@ app.post("/api/analyze", async (req, res) => {
 초기 설정 목표 익절가(TAKE_PROFIT_PCT): ${body.takeProfitPct || 1.0}%
 초기 설정 목표 손절가(STOP_LOSS_PCT): ${body.stopLossPct || 0.5}%
 
+[5분 봉 지표 상태]
+RSI (14): ${inds5.rVals[inds5.rVals.length - 1]?.toFixed(2)}
+MACD Line: ${inds5.mRes[inds5.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds5.mRes[inds5.mRes.length - 1]?.signal?.toFixed(4)}
+
 [15분 봉 지표 상태]
 RSI (14): ${inds15.rVals[inds15.rVals.length - 1]?.toFixed(2)}
 MACD Line: ${inds15.mRes[inds15.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds15.mRes[inds15.mRes.length - 1]?.signal?.toFixed(4)}
 
-[30분 봉 지표 상태]
-RSI (14): ${inds30.rVals[inds30.rVals.length - 1]?.toFixed(2)}
-MACD Line: ${inds30.mRes[inds30.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds30.mRes[inds30.mRes.length - 1]?.signal?.toFixed(4)}
-
-# 트레이딩 전략 (15분 봉 + 30분 봉 듀얼 타임프레임 필터)
-당신은 가짜 돌파를 걸러내고 강력한 기술적 반등 타점을 잡기 위해, 반드시 15분 봉과 30분 봉 차트의 지표를 동시에 결합하여 분석해야 합니다.
+# 트레이딩 전략 (5분 봉 + 15분 봉 듀얼 타임프레임 필터)
+당신은 가짜 돌파를 걸러내고 강력한 기술적 반등 타점을 잡기 위해, 반드시 5분 봉과 15분 봉 차트의 지표를 동시에 결합하여 분석해야 합니다.
 
 1. LONG (매수 진입) 절대 조건:
-   - 15분 봉 RSI와 30분 봉 RSI가 '동시에' 30 근처 또는 그 이하로 떨어져 과매도(Oversold) 상태여야 합니다.
+   - 5분 봉 RSI와 15분 봉 RSI가 '동시에' 30 근처 또는 그 이하로 떨어져 과매도(Oversold) 상태여야 합니다.
    - 이와 동시에, 가격과 MACD 간의 '수렴/다이버전스(Convergence/Divergence)' 현상이 관측되어야 합니다. (가격의 저점은 낮아지고 있으나, MACD 히스토그램이나 시그널 선의 저점은 높아지며 하락 에너지가 고갈되었음을 증명하는 순간)
    - 조치: 위 조건들이 단 1개의 오차도 없이 완벽하게 일치할 때만 "LONG" 신호를 출력하십시오.
 
 2. SHORT (매도 진입) 절대 조건:
-   - 15분 봉 RSI와 30분 봉 RSI가 '동시에' 70 근처 또는 그 이상으로 치솟아 과열(Overbought) 상태여야 합니다.
+   - 5분 봉 RSI와 15분 봉 RSI가 '동시에' 70 근처 또는 그 이상으로 치솟아 과열(Overbought) 상태여야 합니다.
    - 이와 동시에, 하락 다이버전스가 관측되어야 합니다. (가격의 고점은 높아지고 있으나, MACD의 고점은 낮아지며 상승 에너지가 고갈되었음을 증명하는 순간)
    - 조치: 위 조건들이 완벽하게 일치할 때만 "SHORT" 신호를 출력하십시오.
 
 3. HOLD (관망) 조건:
-   - 15분 봉과 30분 봉의 RSI 신호가 서로 일치하지 않거나, MACD 수렴/다이버전스 조건이 조금이라도 애매하다면, 당신은 자산 보호를 최우선으로 하여 무조건 "HOLD" 신호를 출력해야 합니다. 절대로 애매한 자리에서 매매하지 마십시오.
+   - 5분 봉과 15분 봉의 RSI 신호가 서로 일치하지 않거나, MACD 수렴/다이버전스 조건이 조금이라도 애매하다면, 당신은 자산 보호를 최우선으로 하여 무조건 "HOLD" 신호를 출력해야 합니다. 절대로 애매한 자리에서 매매하지 마십시오.
 
 # 리스크 관리 지침 (외부 변수 반영)
 - 당신은 외부 요청(구글 스크립트)에서 제공하는 수동 익절가(TAKE_PROFIT_PCT)와 손절가(STOP_LOSS_PCT) 기준에 도달할 수 있는 타점인지 계산하여 분석에 반영해야 합니다.
@@ -394,7 +394,7 @@ MACD Line: ${inds30.mRes[inds30.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${i
 {
   "pair": "${symbol}",
   "decision": "LONG" 또는 "SHORT" 또는 "HOLD",
-  "reason": "해당 결정을 내린 기술적 근거와 15분/30분 지표 상태를 한국어로 간결하고 명확하게 작성",
+  "reason": "해당 결정을 내린 기술적 근거와 5분/15분 지표 상태를 한국어로 간결하고 명확하게 작성",
   "win_probability": "해당 타점의 예상 매매 성공 확률을 % 단위 숫자로 입력 (예: HOLD일 경우 0, 강력한 신호일 경우 65~80 사이의 숫자)"
 }
       `.trim();
@@ -442,13 +442,13 @@ MACD Line: ${inds30.mRes[inds30.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${i
         rsi: rsiValues.slice(-20),
         macd: macdResult.slice(-20),
       },
+      indicators5m: {
+        rsi: inds5.rVals.slice(-20),
+        macd: inds5.mRes.slice(-20),
+      },
       indicators15m: {
         rsi: inds15.rVals.slice(-20),
         macd: inds15.mRes.slice(-20),
-      },
-      indicators30m: {
-        rsi: inds30.rVals.slice(-20),
-        macd: inds30.mRes.slice(-20),
       },
       lastPrices: closes.slice(-20),
     };

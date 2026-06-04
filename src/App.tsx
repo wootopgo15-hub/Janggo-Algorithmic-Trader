@@ -577,20 +577,27 @@ function main() {
             const arr = Array.isArray(raw) ? raw : raw?.list || [];
             if (Array.isArray(arr)) allHistData.push(...arr);
           }
-
-          const posRes = await fetch(effectiveApiUrl + "/api/trade/positions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...headers },
-            body: JSON.stringify({ symbol: tSym }),
-          });
-          if (posRes.ok) {
-            const raw = await posRes.json();
-            const arr = Array.isArray(raw) ? raw : raw?.list || [];
-            if (Array.isArray(arr)) allPosData.push(...arr);
-          }
         } catch (e) {
-          console.error(`Error for ${tSym}:`, e);
+          console.error(`Error for history ${tSym}:`, e);
         }
+      }
+
+      let fetchPositionsSuccess = false;
+      // Fetch ALL positions once (backend ignores symbol and fetches all)
+      try {
+        const posRes = await fetch(effectiveApiUrl + "/api/trade/positions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify({}),
+        });
+        if (posRes.ok) {
+          const raw = await posRes.json();
+          const arr = Array.isArray(raw) ? raw : raw?.list || [];
+          if (Array.isArray(arr)) allPosData.push(...arr);
+          fetchPositionsSuccess = true;
+        }
+      } catch (e) {
+        console.error("Error for positions:", e);
       }
 
       if (allHistData.length > 0) {
@@ -604,7 +611,7 @@ function main() {
           let hasNew = false;
 
           allHistData.forEach((pos: any) => {
-            const posId = pos.posId || pos.positionId;
+            const posId = pos.posId || pos.positionId || pos.tradeId || (pos.symbol + "_" + (pos.cTime || pos.uTime || pos.closeTime || Math.random().toString()));
             if (posId && !newProcessed.includes(posId)) {
               newProcessed.push(posId);
               const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
@@ -647,12 +654,12 @@ function main() {
         }
       }
 
-      if (allPosData.length > 0) {
+      if (fetchPositionsSuccess) {
         const currentOpenPositions = allPosData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
         
         const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
           const side: "LONG" | "SHORT" = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
-          const posId = pos.posId || pos.positionId || Math.random().toString();
+          const posId = pos.posId || pos.positionId || (pos.symbol + "_" + side);
           const entryPriceSource = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || pos.openPrice || "0";
           return {
             id: posId + "_open",

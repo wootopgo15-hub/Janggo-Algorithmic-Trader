@@ -288,98 +288,120 @@ app.post("/api/analyze", async (req, res) => {
     }
 
     let candles: any[];
+    let candles15m: any[];
+    let candles30m: any[];
+
     if (customData) {
       candles = customData;
+      candles15m = customData;
+      candles30m = customData;
     } else {
-      candles = await fetchBitgetFuturesCandles(symbol, granularity);
+      const [resMain, res15, res30] = await Promise.all([
+        fetchBitgetFuturesCandles(symbol, granularity),
+        granularity === "15m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "15m"),
+        granularity === "30m" ? Promise.resolve(null) : fetchBitgetFuturesCandles(symbol, "30m")
+      ]);
+      candles = resMain;
+      candles15m = res15 || resMain;
+      candles30m = res30 || resMain;
     }
 
-    if (!candles || candles.length < 50) {
+    if (!candles || candles.length < 50 || !candles15m || !candles30m) {
       return res.status(400).json({ error: "Insufficient data for analysis" });
     }
 
-    const closes = candles.map((c) => c.close);
+    const calcInds = (cands: any[]) => {
+      const cls = cands.map((c) => c.close);
+      const rVals = RSI.calculate({ values: cls, period: 14 });
+      const mRes = MACD.calculate({ values: cls, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false });
+      const h = cands.map((c) => c.high);
+      const l = cands.map((c) => c.low);
+      const aVals = ATR.calculate({ high: h, low: l, close: cls, period: 14 });
+      return { cls, rVals, mRes, aVals };
+    };
 
-    const rsiValues = RSI.calculate({ values: closes, period: 14 });
+    const mainInds = calcInds(candles);
+    const inds15 = calcInds(candles15m);
+    const inds30 = calcInds(candles30m);
+
+    const closes = mainInds.cls;
+    const rsiValues = mainInds.rVals;
+    const macdResult = mainInds.mRes;
+    const atrValues = mainInds.aVals;
+
     const lastRSI = rsiValues[rsiValues.length - 1];
     const prevRSI = rsiValues[rsiValues.length - 2];
-
-    const macdResult = MACD.calculate({
-      values: closes,
-      fastPeriod: 12,
-      slowPeriod: 26,
-      signalPeriod: 9,
-      SimpleMAOscillator: false,
-      SimpleMASignal: false,
-    });
-
     const lastMACD = macdResult[macdResult.length - 1];
     const prevMACD = macdResult[macdResult.length - 2];
-
-    const highs = candles.map((c) => c.high);
-    const lows = candles.map((c) => c.low);
-    const atrValues = ATR.calculate({
-      high: highs,
-      low: lows,
-      close: closes,
-      period: 14,
-    });
     const lastATR = atrValues[atrValues.length - 1];
 
     let decision: "LONG" | "SHORT" | "HOLD" = "HOLD";
 
-    // LONG Conditions: RSI 40 Exit OR MACD Golden Cross (Scalping)
-    const rsiOversoldExit = prevRSI <= 40 && lastRSI > prevRSI;
-    const macdGoldenCross =
-      prevMACD.MACD! < prevMACD.signal! && lastMACD.MACD! > lastMACD.signal!;
-
-    if (rsiOversoldExit || macdGoldenCross) {
-      decision = "LONG";
-    }
-
-    // SHORT Conditions: RSI 60 Entry (falling from 60+) OR MACD Dead Cross
-    const rsiOverboughtFalling = prevRSI >= 60 && lastRSI < prevRSI;
-    const macdDeadCross =
-      prevMACD.MACD! > prevMACD.signal! && lastMACD.MACD! < lastMACD.signal!;
-
-    if (rsiOverboughtFalling || macdDeadCross) {
-      decision = "SHORT";
-    }
-
-    // Algorithmic Fallback Summary
-    const fallbackSummary = `[단타 지표] RSI(${lastRSI.toFixed(1)}) / MACD(${lastMACD.MACD?.toFixed(2)}) 기준 ${decision === "HOLD" ? "관망" : decision} (ATR: ${lastATR?.toFixed(2)})`;
+    // HOLD Fallback Base
+    const fallbackSummary = `[기본 지표] RSI(${lastRSI?.toFixed(1)}) / MACD(${lastMACD.MACD?.toFixed(2)}) 기준 관망`;
     let analysis_summary = fallbackSummary;
+    let win_probability = "0";
 
     if (genAI && process.env.GEMINI_API_KEY) {
       const prompt = `
-        당신은 스캘핑/단타 가상화폐 선물 퀀트 투자 전문가입니다. 잦은 매매와 회전율 극대화를 위한 분석을 제공하세요.
-        
-        [현재 시장 지표]
-        현재 가격: ${closes[closes.length - 1]}
-        RSI (14): ${lastRSI.toFixed(2)} (이전: ${prevRSI?.toFixed(2)})
-        MACD Line: ${lastMACD.MACD?.toFixed(4)}, Signal: ${lastMACD.signal?.toFixed(4)}
-        ATR (14) 시장 변동성 측정치: ${lastATR?.toFixed(4)}
-        
-        [스캘핑 매매 지침]
-        1. 지표 기반 신호 (적극적 진입):
-           - LONG: RSI 40 이하 반등 또는 MACD 골든크로스/단기 우상향
-           - SHORT: RSI 60 이상 저항 또는 MACD 데드크로스/단기 우하향
-        2. 리스크 관리 및 짧은 타점 (가장 중요 기준):
-           - 현재 당사 알고리즘의 목표 익절가는 가격 변동의 0.5% ~ 1.0% 사이이며, 손절가는 -0.5%로 매우 짧습니다.
-           - 방향성이 단기적으로 0.5% 이상 나올 수 있는 모멘텀이 보이면 주저 없이 "LONG" 혹은 "SHORT" 포지션을 내십시오.
-           - 모멘텀이 완전히 죽었거나 심각한 횡보 구간에서만 "HOLD"를 선택하십시오. 적극적인 매매 신호를 권장합니다.
-        
-        [응답 형식]
-        반드시 JSON 형식으로 응답하십시오. 일반 텍스트나 포맷팅 기호(\`\`\`json 등)는 포함하지 말고 JSON 데이터만 출력하십시오.
-        {
-          "decision": "LONG",  // "LONG", "SHORT", "HOLD" 중 하나
-          "analysis": "짧은 단위(0.5~1%) 단타/스캘핑 타점 위주의 해석 근거 요약 (최대 2문장)"
-        }
-      `;
+# 역할 및 목표
+당신의 이름은 "장고 알고리즘 트레이더 (Janggo Algorithmic Trader)"이며, 최정예 암호화폐 알고리즘 트레이딩 시스템입니다. 당신의 핵심 투자 철학은 바둑 용어인 '장고(간절히 생각하고 신중하게 복기함)'에서 유래되었습니다. 시장의 미세한 소음(노이즈)을 완벽히 제거하고, 과도한 매매(뇌동매매)를 지양하며, 오직 수학적으로 계산된 정교한 프로 트레이더의 관점으로만 매매 신호를 생성해야 합니다.
+당신의 목표는 수집된 실시간 시장 데이터를 분석하여 비트겟(Bitget) 선물 거래소에 최적의 타점을 제공하는 것입니다.
+
+# 감시 및 매매 자산 (멀티 페어 관리)
+당신은 거래량이 풍부하고 시가총액이 높은 아래 4가지 우량 자산만을 철저히 감시하고 트레이딩합니다:
+- BTCUSDT (비트코인)
+- ETHUSDT (이더리움)
+- SOLUSDT (솔라나)
+- XRPUSDT (리플)
+
+# 현재 분석 대상
+자산: ${symbol}
+현재 가격: ${closes[closes.length - 1]}
+초기 설정 목표 익절가(TAKE_PROFIT_PCT): ${body.takeProfitPct || 1.0}%
+초기 설정 목표 손절가(STOP_LOSS_PCT): ${body.stopLossPct || 0.5}%
+
+[15분 봉 지표 상태]
+RSI (14): ${inds15.rVals[inds15.rVals.length - 1]?.toFixed(2)}
+MACD Line: ${inds15.mRes[inds15.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds15.mRes[inds15.mRes.length - 1]?.signal?.toFixed(4)}
+
+[30분 봉 지표 상태]
+RSI (14): ${inds30.rVals[inds30.rVals.length - 1]?.toFixed(2)}
+MACD Line: ${inds30.mRes[inds30.mRes.length - 1]?.MACD?.toFixed(4)}, Signal: ${inds30.mRes[inds30.mRes.length - 1]?.signal?.toFixed(4)}
+
+# 트레이딩 전략 (15분 봉 + 30분 봉 듀얼 타임프레임 필터)
+당신은 가짜 돌파를 걸러내고 강력한 기술적 반등 타점을 잡기 위해, 반드시 15분 봉과 30분 봉 차트의 지표를 동시에 결합하여 분석해야 합니다.
+
+1. LONG (매수 진입) 절대 조건:
+   - 15분 봉 RSI와 30분 봉 RSI가 '동시에' 30 근처 또는 그 이하로 떨어져 과매도(Oversold) 상태여야 합니다.
+   - 이와 동시에, 가격과 MACD 간의 '수렴/다이버전스(Convergence/Divergence)' 현상이 관측되어야 합니다. (가격의 저점은 낮아지고 있으나, MACD 히스토그램이나 시그널 선의 저점은 높아지며 하락 에너지가 고갈되었음을 증명하는 순간)
+   - 조치: 위 조건들이 단 1개의 오차도 없이 완벽하게 일치할 때만 "LONG" 신호를 출력하십시오.
+
+2. SHORT (매도 진입) 절대 조건:
+   - 15분 봉 RSI와 30분 봉 RSI가 '동시에' 70 근처 또는 그 이상으로 치솟아 과열(Overbought) 상태여야 합니다.
+   - 이와 동시에, 하락 다이버전스가 관측되어야 합니다. (가격의 고점은 높아지고 있으나, MACD의 고점은 낮아지며 상승 에너지가 고갈되었음을 증명하는 순간)
+   - 조치: 위 조건들이 완벽하게 일치할 때만 "SHORT" 신호를 출력하십시오.
+
+3. HOLD (관망) 조건:
+   - 15분 봉과 30분 봉의 RSI 신호가 서로 일치하지 않거나, MACD 수렴/다이버전스 조건이 조금이라도 애매하다면, 당신은 자산 보호를 최우선으로 하여 무조건 "HOLD" 신호를 출력해야 합니다. 절대로 애매한 자리에서 매매하지 마십시오.
+
+# 리스크 관리 지침 (외부 변수 반영)
+- 당신은 외부 요청(구글 스크립트)에서 제공하는 수동 익절가(TAKE_PROFIT_PCT)와 손절가(STOP_LOSS_PCT) 기준에 도달할 수 있는 타점인지 계산하여 분석에 반영해야 합니다.
+
+# 출력 형식 (Output Format)
+당신은 오직 아래의 엄격한 JSON 형식으로만 답변해야 합니다. JSON 블록 외부에 마크다운 설명이나 문장을 절대로 추가하지 마십시오. 현재 분석 중인 코인의 지표 신호 강도와 신뢰도를 기반으로 매매 성공 확률(win_probability)을 정확히 계산하여 포함하십시오.
+
+{
+  "pair": "${symbol}",
+  "decision": "LONG" 또는 "SHORT" 또는 "HOLD",
+  "reason": "해당 결정을 내린 기술적 근거와 15분/30분 지표 상태를 한국어로 간결하고 명확하게 작성",
+  "win_probability": "해당 타점의 예상 매매 성공 확률을 % 단위 숫자로 입력 (예: HOLD일 경우 0, 강력한 신호일 경우 65~80 사이의 숫자)"
+}
+      `.trim();
 
       try {
-        const response = await genAI.models.generateContent({
-          model: "gemini-1.5-flash",
+        const response = await (genAI! as GoogleGenAI).models.generateContent({
+          model: "gemini-3.1-pro-preview", // Updated to the best reasoning model
           contents: prompt,
         });
 
@@ -397,15 +419,17 @@ app.post("/api/analyze", async (req, res) => {
         ) {
           decision = aiJson.decision;
         }
-        if (aiJson.analysis) {
-          analysis_summary = aiJson.analysis;
+        if (aiJson.reason || aiJson.analysis) {
+          analysis_summary = aiJson.reason || aiJson.analysis;
+        }
+        if (aiJson.win_probability !== undefined) {
+          win_probability = String(aiJson.win_probability);
         }
       } catch (e: any) {
         console.error("Gemini API Error Details:", e);
         console.log(
           "Gemini fallback applied due to API limits or parsing errors.",
         );
-        // Silent fallback - users will see the algorithmic prompt instead of an error message
         analysis_summary = fallbackSummary;
       }
     }
@@ -413,9 +437,18 @@ app.post("/api/analyze", async (req, res) => {
     const result = {
       decision,
       analysis_summary,
+      win_probability,
       indicators: {
         rsi: rsiValues.slice(-20),
         macd: macdResult.slice(-20),
+      },
+      indicators15m: {
+        rsi: inds15.rVals.slice(-20),
+        macd: inds15.mRes.slice(-20),
+      },
+      indicators30m: {
+        rsi: inds30.rVals.slice(-20),
+        macd: inds30.mRes.slice(-20),
       },
       lastPrices: closes.slice(-20),
     };

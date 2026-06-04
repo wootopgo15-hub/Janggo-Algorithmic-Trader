@@ -225,7 +225,7 @@ export default function App() {
     customUrl || window.location.origin.replace(/\/+$/, "");
 
   const appsScriptCode = `/**
- * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.7.2)
+ * 🚀 비트겟 선물 자동매매 전문 스크립트 (Bitget Futures v3.8.2)
  * 
  * [중요 설정 안내]
  * 본 스크립트는 Vercel을 포함한 외부 배포 주소와 연동하여 사용 가능합니다.
@@ -254,7 +254,11 @@ function main() {
     const options = {
       method: "post",
       contentType: "application/json",
-      payload: JSON.stringify({ symbol: SYMBOL }),
+      payload: JSON.stringify({ 
+        symbol: SYMBOL,
+        takeProfitPct: TAKE_PROFIT,
+        stopLossPct: STOP_LOSS
+      }),
       muteHttpExceptions: true,
       followRedirects: false
     };
@@ -461,7 +465,12 @@ function main() {
       const response = await fetch(effectiveApiUrl + "/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, granularity }),
+        body: JSON.stringify({ 
+          symbol, 
+          granularity, 
+          takeProfitPct: takeProfit, 
+          stopLossPct: stopLoss 
+        }),
       });
 
       const contentType = response.headers.get("content-type");
@@ -745,7 +754,7 @@ function main() {
                   Janggo Algorithmic Trader
                 </h1>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700/50">
-                  v3.7.2
+                  v3.8.2
                 </span>
               </div>
               <div className="flex items-center gap-3 mt-0.5">
@@ -845,6 +854,8 @@ function main() {
                   >
                     <option value="BTCUSDT">BTC/USDT</option>
                     <option value="ETHUSDT">ETH/USDT</option>
+                    <option value="SOLUSDT">SOL/USDT</option>
+                    <option value="XRPUSDT">XRP/USDT</option>
                   </select>
                   <div className="w-px h-3 bg-[#30363d]" />
                   <select
@@ -853,8 +864,8 @@ function main() {
                     className="bg-transparent border-none focus:ring-0 text-slate-400 cursor-pointer text-xs"
                   >
                     <option value="15m">15m</option>
+                    <option value="30m">30m</option>
                     <option value="1H">1H</option>
-                    <option value="4H">4H</option>
                     <option value="1D">1D</option>
                   </select>
                 </div>
@@ -868,7 +879,7 @@ function main() {
                     </span>
                   </div>
                   <iframe
-                    src={`https://s.tradingview.com/widgetembed/?symbol=BITGET:${symbol}.P&interval=${granularity === "1H" ? "60" : granularity === "15m" ? "15" : granularity === "4H" ? "240" : "D"}&theme=dark&style=1&timezone=Etc%2FUTC&studies=%5B%5D&locale=en`}
+                    src={`https://s.tradingview.com/widgetembed/?symbol=BITGET:${symbol}.P&interval=${granularity === "1H" ? "60" : granularity === "30m" ? "30" : granularity === "15m" ? "15" : "D"}&theme=dark&style=1&timezone=Etc%2FUTC&studies=%5B%5D&locale=en`}
                     width="100%"
                     height="100%"
                     frameBorder="0"
@@ -1318,73 +1329,85 @@ function main() {
                         )}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center">
-                        <span className="text-xs text-slate-400 font-mono mb-1">
-                          RSI ({granularity})
+                    <div className="grid grid-cols-2 gap-3 mb-2">
+                      {/* 15m Indicators */}
+                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
+                        <div className="absolute top-0 right-0 bg-blue-500/10 text-blue-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">15m</div>
+                        <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
+                          RSI / MACD
                         </span>
-                        <span
-                          className={cn(
-                            "text-lg font-mono font-bold flex items-center",
-                            analysis &&
-                              (analysis.indicators.rsi[
-                                analysis.indicators.rsi.length - 1
-                              ] < 30
-                                ? "text-emerald-400"
-                                : analysis.indicators.rsi[
-                                      analysis.indicators.rsi.length - 1
-                                    ] > 70
-                                  ? "text-rose-400"
-                                  : "text-slate-200"),
-                          )}
-                        >
-                          {analysis ? (
-                            analysis.indicators.rsi[
-                              analysis.indicators.rsi.length - 1
-                            ].toFixed(2)
-                          ) : (
-                            <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
-                          )}
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span
+                            className={cn(
+                              "text-lg font-mono font-bold flex items-center",
+                              analysis?.indicators15m &&
+                                (analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1] < 30
+                                  ? "text-emerald-400"
+                                  : analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1] > 70
+                                    ? "text-rose-400"
+                                    : "text-slate-200")
+                            )}
+                          >
+                            {analysis?.indicators15m ? analysis.indicators15m.rsi[analysis.indicators15m.rsi.length - 1].toFixed(2) : <RefreshCw className="w-4 h-4 animate-spin opacity-50" />}
+                          </span>
+                          <span
+                            className={cn(
+                              "text-[10px] font-mono font-bold uppercase",
+                              analysis?.indicators15m && analysis.indicators15m.macd.length >= 2 &&
+                                (analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.MACD! >
+                                  analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.signal!
+                                  ? "text-emerald-400"
+                                  : "text-rose-400")
+                            )}
+                          >
+                            {analysis?.indicators15m ? (
+                              analysis.indicators15m.macd.length >= 2 ? (
+                                analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.MACD! >
+                                analysis.indicators15m.macd[analysis.indicators15m.macd.length - 1]?.signal! ? "GOLD" : "DEAD"
+                              ) : "CALC"
+                            ) : ""}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center">
-                        <span className="text-xs text-slate-400 font-mono mb-1">
-                          MACD ({granularity})
+
+                      {/* 30m Indicators */}
+                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
+                        <div className="absolute top-0 right-0 bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">30m</div>
+                        <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
+                          RSI / MACD
                         </span>
-                        <span
-                          className={cn(
-                            "text-[10px] sm:text-xs font-mono font-bold flex items-center mt-1 uppercase",
-                            analysis &&
-                              (analysis.indicators.macd.length >= 2 &&
-                              analysis.indicators.macd[
-                                analysis.indicators.macd.length - 1
-                              ]?.MACD! >
-                                analysis.indicators.macd[
-                                  analysis.indicators.macd.length - 1
-                                ]?.signal!
-                                ? "text-emerald-400"
-                                : "text-rose-400"),
-                          )}
-                        >
-                          {analysis ? (
-                            analysis.indicators.macd.length >= 2 ? (
-                              analysis.indicators.macd[
-                                analysis.indicators.macd.length - 1
-                              ]?.MACD! >
-                              analysis.indicators.macd[
-                                analysis.indicators.macd.length - 1
-                              ]?.signal! ? (
-                                "GOLDEN CROSS"
-                              ) : (
-                                "DEAD CROSS"
-                              )
-                            ) : (
-                              "CALCULATING"
-                            )
-                          ) : (
-                            <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
-                          )}
-                        </span>
+                        <div className="flex items-center justify-between">
+                          <span
+                            className={cn(
+                              "text-lg font-mono font-bold flex items-center",
+                              analysis?.indicators30m &&
+                                (analysis.indicators30m.rsi[analysis.indicators30m.rsi.length - 1] < 30
+                                  ? "text-emerald-400"
+                                  : analysis.indicators30m.rsi[analysis.indicators30m.rsi.length - 1] > 70
+                                    ? "text-rose-400"
+                                    : "text-slate-200")
+                            )}
+                          >
+                            {analysis?.indicators30m ? analysis.indicators30m.rsi[analysis.indicators30m.rsi.length - 1].toFixed(2) : <RefreshCw className="w-4 h-4 animate-spin opacity-50" />}
+                          </span>
+                          <span
+                            className={cn(
+                              "text-[10px] font-mono font-bold uppercase",
+                              analysis?.indicators30m && analysis.indicators30m.macd.length >= 2 &&
+                                (analysis.indicators30m.macd[analysis.indicators30m.macd.length - 1]?.MACD! >
+                                  analysis.indicators30m.macd[analysis.indicators30m.macd.length - 1]?.signal!
+                                  ? "text-emerald-400"
+                                  : "text-rose-400")
+                            )}
+                          >
+                            {analysis?.indicators30m ? (
+                              analysis.indicators30m.macd.length >= 2 ? (
+                                analysis.indicators30m.macd[analysis.indicators30m.macd.length - 1]?.MACD! >
+                                analysis.indicators30m.macd[analysis.indicators30m.macd.length - 1]?.signal! ? "GOLD" : "DEAD"
+                              ) : "CALC"
+                            ) : ""}
+                          </span>
+                        </div>
                       </div>
                     </div>
 

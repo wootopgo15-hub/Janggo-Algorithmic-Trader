@@ -23,7 +23,16 @@ export interface MACDResult {
 export interface AnalysisResult {
   decision: Decision;
   analysis_summary: string;
+  win_probability?: string;
   indicators: {
+    rsi: number[];
+    macd: MACDResult[];
+  };
+  indicators15m?: {
+    rsi: number[];
+    macd: MACDResult[];
+  };
+  indicators30m?: {
     rsi: number[];
     macd: MACDResult[];
   };

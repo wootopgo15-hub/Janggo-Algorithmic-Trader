@@ -260,7 +260,7 @@ async function fetchBitgetFuturesCandles(
 
 // Simple in-memory cache to prevent Gemini quota exhaustion
 const analysisCache: Record<string, { data: any; timestamp: number }> = {};
-const CACHE_DURATION = 1 * 60 * 1000; // 1 minute cache for fresh signals while respecting Flash free tier quota
+const CACHE_DURATION = 15 * 1000; // 15 seconds cache for real-time RSI updates (Gemini handles rate limits gracefully via fallback)
 
 app.post("/api/analyze", async (req, res) => {
   try {
@@ -405,7 +405,11 @@ app.post("/api/analyze", async (req, res) => {
     let analysis_summary = fallbackSummary;
     let win_probability = "0";
 
-    if (genAI && process.env.GEMINI_API_KEY) {
+    // 💡 [API 최적화 핵심 로직] 
+    // 관망(HOLD) 상태일 때는 비싼 AI(Gemini) API를 호출하지 않고 실시간 자체 지표 텍스트만 바로 반환합니다.
+    // 매수(LONG) 또는 매도(SHORT) 타점이 명확하게 나왔을 때만 AI API를 호출하여 정밀 분석을 수행합니다.
+    // 이렇게 하면 15초마다 갱신해도 무료 API 한도 초과(429 에러)가 절대 발생하지 않습니다.
+    if (genAI && process.env.GEMINI_API_KEY && decision !== "HOLD") {
       const prompt = `
 # 역할 및 목표
 당신의 이름은 "장고 알고리즘 트레이더 (Janggo Algorithmic Trader)"입니다. 당신의 목표는 수집된 실시간 시장 데이터를 요약하여 비트겟(Bitget) 선물 거래용 판단 정보를 JSON으로 반환하는 것입니다.

@@ -517,6 +517,10 @@ app.post("/api/trade/history", async (req, res) => {
     if (symbol) {
       endpoint += `&symbol=${symbol}`;
     }
+    const endTime = Date.now();
+    const startTime = endTime - (30 * 24 * 60 * 60 * 1000); // 30 days ago
+    endpoint += `&startTime=${startTime}&endTime=${endTime}`;
+    
     const timestamp = Date.now().toString();
     const message = timestamp + "GET" + endpoint;
     const signature = crypto

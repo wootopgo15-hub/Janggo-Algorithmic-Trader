@@ -55,6 +55,7 @@ interface TradeLog {
   slPrice?: string;
   pnl?: string;
   isClose?: boolean;
+  isOpenPos?: boolean;
 }
 
 export default function App() {
@@ -396,10 +397,12 @@ function main() {
     isAuto: boolean = false,
     customTp?: string,
     customSl?: string,
+    tradeSymbol?: string
   ) => {
     try {
       const activeTp = customTp ?? takeProfit;
       const activeSl = customSl ?? stopLoss;
+      const tSymbol = tradeSymbol || symbol;
       const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
         method: "POST",
         headers: {
@@ -410,7 +413,7 @@ function main() {
         },
         body: JSON.stringify({
           side,
-          symbol,
+          symbol: tSymbol,
           amount,
           takeProfit: activeTp,
           stopLoss: activeSl,
@@ -431,7 +434,7 @@ function main() {
       const newLog: TradeLog = {
         id: Math.random().toString(36).substr(2, 9),
         side,
-        symbol,
+        symbol: tSymbol,
         amount,
         timestamp: new Date().toISOString(),
         status: response.ok ? "SUCCESS" : "FAILED",
@@ -458,60 +461,74 @@ function main() {
     return () => clearInterval(timer);
   }, []);
 
-  const performAnalysis = async () => {
-    setLoading(true);
+  const runAnalysisCycle = async () => {
+    // 1. Target symbols for the cycle
+    const targets = isAutoTrade ? ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"] : [symbol];
+    
+    // UI Loading state only if we are querying the active symbol and it has no data yet
+    if (!analysis) setLoading(true);
     setError(null);
-    try {
-      const response = await fetch(effectiveApiUrl + "/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          symbol, 
-          granularity, 
-          takeProfitPct: takeProfit, 
-          stopLossPct: stopLoss 
-        }),
-      });
+    
+    for (const tSymbol of targets) {
+      try {
+        const response = await fetch(effectiveApiUrl + "/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            symbol: tSymbol, 
+            granularity, 
+            takeProfitPct: takeProfit, 
+            stopLossPct: stopLoss 
+          }),
+        });
 
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await response.text();
-        console.error("Non-JSON response received:", text);
-        throw new Error(
-          "서버가 JSON 대신 HTML(웹페이지)을 반환했습니다. 앱을 새로고침하거나 공개 설정을 확인하세요.",
-        );
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          const text = await response.text();
+          console.error("Non-JSON response received:", text);
+          if (tSymbol === symbol) {
+            throw new Error(
+              "서버가 JSON 대신 HTML(웹페이지)을 반환했습니다. 앱을 새로고침하거나 공개 설정을 확인하세요.",
+            );
+          } else continue;
+        }
+
+        const data = await response.json();
+        if (!response.ok) {
+          if (tSymbol === symbol) throw new Error(data.error || "Analysis failed");
+          else continue;
+        }
+
+        // Update UI only for the currently active tab symbol
+        if (tSymbol === symbol) {
+          setAnalysis(data);
+        }
+
+        // Auto Trading Logic
+        const currentCacheKey = `${tSymbol}_${granularity}`;
+        const isFirstView = !(currentCacheKey in lastSignalRef.current);
+        const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
+
+        if (
+          !isFirstView &&
+          isAutoTrade &&
+          data.decision !== "HOLD" &&
+          data.decision !== previousDecision
+        ) {
+          executeTrade(data.decision, orderSize, true, undefined, undefined, tSymbol);
+        }
+
+        // Update ref anyway so it tracks properly even if auto trade is off
+        lastSignalRef.current[currentCacheKey] = data.decision;
+      } catch (err: any) {
+        if (tSymbol === symbol) setError(err.message);
       }
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Analysis failed");
-
-      setAnalysis(data);
-
-      // Auto Trading Logic
-      const currentCacheKey = `${symbol}_${granularity}`;
-      const isFirstView = !(currentCacheKey in lastSignalRef.current);
-      const previousDecision = lastSignalRef.current[currentCacheKey] || "HOLD";
-
-      if (
-        !isFirstView &&
-        isAutoTrade &&
-        data.decision !== "HOLD" &&
-        data.decision !== previousDecision
-      ) {
-        executeTrade(data.decision, orderSize, true);
-      }
-
-      // Update ref anyway so it tracks properly even if auto trade is off
-      lastSignalRef.current[currentCacheKey] = data.decision;
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
-  const performAnalysisRef = useRef(performAnalysis);
-  performAnalysisRef.current = performAnalysis;
+  const performAnalysisRef = useRef(runAnalysisCycle);
+  performAnalysisRef.current = runAnalysisCycle;
 
   useEffect(() => {
     performAnalysisRef.current();
@@ -656,7 +673,9 @@ function main() {
                   entryPrice: parseFloat(
                     pos.openAvgPrice || pos.openPrice || "0",
                   ),
+                  pnl: pos.unrealizedPL || "0",
                   isClose: false,
+                  isOpenPos: true,
                 });
               }
             });
@@ -1874,13 +1893,19 @@ function main() {
                                   "p-2 rounded-lg",
                                   log.isClose
                                     ? "bg-slate-500/10 text-slate-400"
-                                    : log.side === "LONG"
-                                      ? "bg-emerald-500/10 text-emerald-500"
-                                      : "bg-rose-500/10 text-rose-500",
+                                    : log.isOpenPos
+                                      ? "bg-blue-500/10 text-blue-500 border border-blue-500/20 shadow-[0_0_15px_rgba(59,130,246,0.15)]"
+                                      : log.side === "LONG"
+                                        ? "bg-emerald-500/10 text-emerald-500"
+                                        : "bg-rose-500/10 text-rose-500",
                                 )}
                               >
                                 {log.isClose ? (
                                   <History className="w-4 h-4" />
+                                ) : log.isOpenPos && log.side === "LONG" ? (
+                                  <TrendingUp className="w-4 h-4" />
+                                ) : log.isOpenPos && log.side === "SHORT" ? (
+                                  <TrendingDown className="w-4 h-4" />
                                 ) : log.side === "LONG" ? (
                                   <TrendingUp className="w-4 h-4" />
                                 ) : (
@@ -1896,16 +1921,20 @@ function main() {
                                       "text-[10px] px-1.5 py-0.5 rounded uppercase font-mono",
                                       log.isClose
                                         ? "bg-slate-500/20 text-slate-400"
-                                        : log.status === "SUCCESS"
-                                          ? "bg-emerald-500/20 text-emerald-500"
-                                          : "bg-rose-500/20 text-rose-500",
+                                        : log.isOpenPos
+                                          ? "bg-blue-500/20 text-blue-400 font-bold tracking-widest animate-pulse"
+                                          : log.status === "SUCCESS"
+                                            ? "bg-emerald-500/20 text-emerald-500"
+                                            : "bg-rose-500/20 text-rose-500",
                                     )}
                                   >
                                     {log.isClose
                                       ? "REALIZED"
-                                      : log.status === "SUCCESS"
-                                        ? "LIMIT ORDER"
-                                        : log.status}
+                                      : log.isOpenPos
+                                        ? "TRADING..."
+                                        : log.status === "SUCCESS"
+                                          ? "LIMIT ORDER"
+                                          : log.status}
                                   </span>
                                 </div>
                                 <div className="text-xs text-slate-500 font-mono mt-0.5">
@@ -1930,8 +1959,8 @@ function main() {
                               </div>
                             </div>
                             <div className="flex items-center gap-3">
-                              <div className="text-xs font-mono text-slate-600 group-hover:text-slate-400 transition-all">
-                                ID_{log.id}
+                              <div className="text-[10px] font-mono text-slate-600 group-hover:text-slate-400 transition-all text-right max-w-[120px] truncate" title={log.id}>
+                                Pos_{log.id.replace('_open', '').replace('_close', '').substring(0, 8)}...
                               </div>
                               <button
                                 onClick={(e) => deleteLog(e, log.id)}
@@ -1964,6 +1993,33 @@ function main() {
                                     parseFloat(log.pnl || "0") >= 0
                                       ? "text-emerald-500"
                                       : "text-rose-500",
+                                  )}
+                                >
+                                  {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
+                                  {log.pnl} USDT
+                                </span>
+                              </div>
+                            </div>
+                          ) : log.isOpenPos ? (
+                            <div className="flex justify-between items-center p-3 bg-blue-500/5 rounded-lg border border-blue-500/20">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] text-blue-400/70 uppercase font-mono mb-1">
+                                  Entry Price
+                                </span>
+                                <span className="text-sm font-bold text-blue-100 font-mono">
+                                  {log.entryPrice ? `$${log.entryPrice}` : "-"}
+                                </span>
+                              </div>
+                              <div className="flex flex-col items-end">
+                                <span className="text-[10px] text-blue-400/70 uppercase font-mono mb-1">
+                                  Unrealized PnL
+                                </span>
+                                <span
+                                  className={cn(
+                                    "text-lg font-bold font-mono",
+                                    parseFloat(log.pnl || "0") >= 0
+                                      ? "text-emerald-400"
+                                      : "text-rose-400",
                                   )}
                                 >
                                   {parseFloat(log.pnl || "0") > 0 ? "+" : ""}
@@ -2034,8 +2090,10 @@ function main() {
                             <div className="mt-3 text-[10px] text-slate-500 font-mono border-t border-[#30363d]/50 pt-2 text-right">
                               {log.isClose
                                 ? "Position liquidated or closed via SL/TP"
-                                : log.reason ||
-                                  "Executed Limit Order by AI Expert Bot"}
+                                : log.isOpenPos
+                                  ? "Current active position being monitored"
+                                  : log.reason ||
+                                    "Executed Limit Order by AI Expert Bot"}
                             </div>
                           )}
                         </div>

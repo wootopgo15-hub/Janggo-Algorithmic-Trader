@@ -130,17 +130,6 @@ export default function App() {
     }
   });
 
-  const [processedHistoryIds, setProcessedHistoryIds] = useState<string[]>(
-    () => {
-      try {
-        const saved = localStorage.getItem("janggo_trade_history_ids");
-        return saved ? JSON.parse(saved) : [];
-      } catch {
-        return [];
-      }
-    },
-  );
-
   useEffect(() => {
     localStorage.setItem("janggo_trade_logs", JSON.stringify(logs));
   }, [logs]);
@@ -148,13 +137,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("janggo_trade_stats", JSON.stringify(stats));
   }, [stats]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "janggo_trade_history_ids",
-      JSON.stringify(processedHistoryIds),
-    );
-  }, [processedHistoryIds]);
 
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">(
     "analysis",
@@ -601,19 +583,20 @@ function main() {
       }
 
       if (allHistData.length > 0) {
-        let newLogsToAdd: TradeLog[] = [];
-
-        setProcessedHistoryIds((prevProcessed) => {
-          let newProcessed = [...prevProcessed];
+        setLogs((prev) => {
+          let newLogsToAdd: TradeLog[] = [];
           let addedWins = 0;
           let addedLosses = 0;
           let addedProfit = 0;
           let hasNew = false;
 
           allHistData.forEach((pos: any) => {
-            const posId = pos.posId || pos.positionId || pos.tradeId || (pos.symbol + "_" + (pos.cTime || pos.uTime || pos.closeTime || Math.random().toString()));
-            if (posId && !newProcessed.includes(posId)) {
-              newProcessed.push(posId);
+            const posSymbol = pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
+            const posId = pos.posId || pos.positionId || pos.tradeId || (posSymbol + "_" + (pos.cTime || pos.uTime || pos.closeTime || Math.random().toString()));
+            const newCloseId = posId + "_close";
+            
+            // Check if this closed position already exists in prev logs OR newLogsToAdd
+            if (!prev.some(l => l.id === newCloseId) && !newLogsToAdd.some(l => l.id === newCloseId)) {
               const pnlVal = parseFloat(pos.netProfit || pos.pnl || "0");
               if (pnlVal > 0) addedWins++;
               else if (pnlVal < 0) addedLosses++;
@@ -621,9 +604,9 @@ function main() {
               hasNew = true;
 
               newLogsToAdd.push({
-                id: posId + "_close",
+                id: newCloseId,
                 side: "CLOSE",
-                symbol: pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN",
+                symbol: posSymbol,
                 amount: pos.closeTotalPos || "0",
                 timestamp:
                   pos.uTime || pos.cTime || pos.utime || pos.ctime || pos.closeTime
@@ -645,26 +628,24 @@ function main() {
               lossCount: prevParams.lossCount + addedLosses,
               totalProfit: prevParams.totalProfit + addedProfit,
             }));
+            return [...newLogsToAdd, ...prev].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 50);
           }
-          return newProcessed;
+          return prev;
         });
-
-        if (newLogsToAdd.length > 0) {
-          setLogs((prev) => [...newLogsToAdd, ...prev].slice(0, 50));
-        }
       }
 
       if (fetchPositionsSuccess) {
         const currentOpenPositions = allPosData.filter((pos: any) => parseFloat(pos.total || pos.available || "0") > 0);
         
         const newOpenLogs: TradeLog[] = currentOpenPositions.map(pos => {
+          const posSymbol = pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
           const side: "LONG" | "SHORT" = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
-          const posId = pos.posId || pos.positionId || (pos.symbol + "_" + side);
+          const posId = pos.posId || pos.positionId || pos.tradeId || (posSymbol + "_" + side);
           const entryPriceSource = pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || pos.openPrice || "0";
           return {
             id: posId + "_open",
             side: side,
-            symbol: pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN",
+            symbol: posSymbol,
             amount: pos.total || pos.baseVolume || "0",
             timestamp: pos.cTime || pos.uTime || pos.ctime || pos.utime ? new Date(parseInt(pos.cTime || pos.uTime || pos.ctime || pos.utime)).toISOString() : new Date().toISOString(),
             status: "SUCCESS" as const,
@@ -1823,7 +1804,6 @@ function main() {
                   <button
                     onClick={() => {
                       setLogs([]);
-                      setProcessedHistoryIds([]);
                     }}
                     className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-[10px] text-rose-500 hover:bg-rose-500/20 transition-colors uppercase font-mono border border-rose-500/20"
                   >
@@ -2064,6 +2044,9 @@ function main() {
         {/* Footer info */}
         <footer className="text-center p-8">
           <p className="text-[#30363d] text-[10px] font-mono leading-relaxed max-w-2xl mx-auto">
+            [DEBUG] logs: {logs.length} | 
+            open: {logs.filter(l => l.isOpenPos).length} | close: {logs.filter(l => l.isClose).length}
+            <br />
             STRATEGY_RULES: RSI_OVERSOLD_EXIT (30) OR MACD_GOLDEN_CROSS == LONG
             | RSI_OVERBOUGHT_FALLING (70) OR MACD_DEAD_CROSS == SHORT
             <br />

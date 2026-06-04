@@ -1,6 +1,20 @@
-const axios = require('axios');
-axios.get("https://raw.githubusercontent.com/bitget-api/bitget-node-sdk-api/master/src/lib/mix/MixOrderApi.ts")
-  .then(res => {
-    const lines = res.data.split("\n").filter(l => l.toLowerCase().includes("preset"));
-    console.log(lines.join("\n"));
-  }).catch(e => console.error(e.message));
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+</div>
+
+# Run and deploy your AI Studio app
+
+This contains everything you need to run your app locally.
+
+View your app in AI Studio: https://ai.studio/apps/9e697c05-20ef-4325-87c3-0c0c665b843c
+
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

@@ -1,23 +1,43 @@
-import axios from 'axios';
-import crypto from 'crypto';
-
-const apiKey = process.env.BITGET_API_KEY || ''; // Add here if needed
-const secretKey = process.env.BITGET_SECRET_KEY || '';
-const passphrase = process.env.BITGET_PASSPHRASE || '';
-
-const endpoint = "/api/v2/mix/position/history-position?productType=USDT-FUTURES&symbol=ETHUSDT";
-const timestamp = Date.now().toString();
-const message = timestamp + "GET" + endpoint;
-const signature = crypto.createHmac("sha256", secretKey).update(message).digest("base64");
-
-axios.get(`https://api.bitget.com${endpoint}`, {
-  headers: {
-    "ACCESS-KEY": apiKey,
-    "ACCESS-SIGN": signature,
-    "ACCESS-TIMESTAMP": timestamp,
-    "ACCESS-PASSPHRASE": passphrase,
-    "Content-Type": "application/json",
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "clean": "rm -rf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.1.14",
+    "@vitejs/plugin-react": "^5.0.4",
+    "axios": "^1.16.1",
+    "bitget-api": "^3.1.8",
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.6.0",
+    "technicalindicators": "^3.1.0",
+    "vite": "^6.2.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.14",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.3"
   }
-}).then(res => {
-  console.log(res.data.data);
-}).catch(console.error);
+}

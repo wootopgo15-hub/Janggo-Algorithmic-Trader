@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import axios from "axios";
-import { RSI, MACD, ATR, StochasticRSI } from "technicalindicators";
+import { SMA } from "technicalindicators";
 import { GoogleGenAI } from "@google/genai";
 import crypto from "crypto";
 import dotenv from "dotenv";
@@ -191,11 +191,12 @@ async function executeFuturesOrder(
     };
   } catch (axiosError: any) {
     if (axiosError.response) {
-      console.error("Bitget API Error:", axiosError.response.data);
+      const respData = axiosError.response.data;
+      console.error("Bitget API Error:", typeof respData === 'object' ? JSON.stringify(respData) : respData);
       let errMsg =
-        axiosError.response.data.msg ||
-        JSON.stringify(axiosError.response.data);
-      if (errMsg.includes("apikey/password is incorrect")) {
+        respData?.msg ||
+        (typeof respData === "object" ? JSON.stringify(respData) : respData);
+      if (typeof errMsg === 'string' && errMsg.includes("apikey/password is incorrect")) {
         errMsg =
           "Bitget API 키 정보가 올바르지 않습니다. 환경 변수에 본인의 API Key, Secret Key를 등록해주세요.";
       }
@@ -241,7 +242,8 @@ async function fetchBitgetFuturesCandles(
     );
 
     if (response.data.code !== "00000") {
-      throw new Error(`Bitget API Error: ${response.data.msg}`);
+      const errMsg = typeof response.data.msg === "object" ? JSON.stringify(response.data.msg) : response.data.msg;
+      throw new Error(`Bitget API Error: ${errMsg}`);
     }
 
     return response.data.data.map((candle: any[]) => ({
@@ -308,7 +310,7 @@ app.post("/api/analyze", async (req, res) => {
       candles = resMain;
       candles5m = res5 || resMain;
       candles15m = res15 || resMain;
-      
+
       const aggregateTo10m = (c5: any[]) => {
         const result = [];
         let current10m: any = null;
@@ -332,80 +334,83 @@ app.post("/api/analyze", async (req, res) => {
         if (current10m) result.push({ ...current10m });
         return result;
       };
-      
+
       candles10m = aggregateTo10m(candles5m);
     }
 
-    if (!candles || candles.length < 50 || !candles5m || !candles10m || !candles15m) {
+    if (
+      !candles ||
+      candles.length < 50 ||
+      !candles5m ||
+      !candles10m ||
+      !candles15m
+    ) {
       return res.status(400).json({ error: "Insufficient data for analysis" });
     }
 
     const calcInds = (cands: any[]) => {
       const cls = cands.map((c) => c.close);
-      const rVals = RSI.calculate({ values: cls, period: 14 });
-      const srVals = StochasticRSI.calculate({
-        values: cls,
-        rsiPeriod: 14,
-        stochasticPeriod: 14,
-        kPeriod: 3,
-        dPeriod: 3,
-      });
-      const mRes = MACD.calculate({
-        values: cls,
-        fastPeriod: 12,
-        slowPeriod: 26,
-        signalPeriod: 9,
-        SimpleMAOscillator: false,
-        SimpleMASignal: false,
-      });
-      const h = cands.map((c) => c.high);
-      const l = cands.map((c) => c.low);
-      const aVals = ATR.calculate({ high: h, low: l, close: cls, period: 14 });
-      return { cls, rVals, srVals, mRes, aVals };
+
+      const haCands = [];
+      for (let i = 0; i < cands.length; i++) {
+        const c = cands[i];
+        if (i === 0) {
+          haCands.push({
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: (c.open + c.high + c.low + c.close) / 4,
+          });
+        } else {
+          const prev = haCands[i - 1];
+          const haOpen = (prev.open + prev.close) / 2;
+          const haClose = (c.open + c.high + c.low + c.close) / 4;
+          const haHigh = Math.max(c.high, haOpen, haClose);
+          const haLow = Math.min(c.low, haOpen, haClose);
+          haCands.push({
+            open: haOpen,
+            high: haHigh,
+            low: haLow,
+            close: haClose,
+          });
+        }
+      }
+      const haCloses = haCands.map(c => c.close);
+      const smaVals = SMA.calculate({ values: haCloses, period: 20 });
+      
+      return { cls, haCloses, smaVals };
     };
 
     const mainInds = calcInds(candles);
-    const inds5 = calcInds(candles5m);
-    const inds10 = calcInds(candles10m);
     const inds15 = calcInds(candles15m);
-
-    const closes = mainInds.cls;
-    const rsiValues = mainInds.rVals;
-    const macdResult = mainInds.mRes;
-    const atrValues = mainInds.aVals;
-
-    const lastRSI = rsiValues[rsiValues.length - 1];
-    const prevRSI = rsiValues[rsiValues.length - 2];
-    const lastMACD = macdResult[macdResult.length - 1];
-    const prevMACD = macdResult[macdResult.length - 2];
-    const lastATR = atrValues[atrValues.length - 1];
 
     let decision: "LONG" | "SHORT" | "HOLD" = "HOLD";
 
-    // Strict local rules
-    const rsi5m = inds5.rVals[inds5.rVals.length - 1];
-    const rsi10m = inds10.rVals[inds10.rVals.length - 1];
-    const rsi15m = inds15.rVals[inds15.rVals.length - 1];
+    // Strict local rules (15m HA & 20 SMA)
+    const smaPad = inds15.haCloses.length - inds15.smaVals.length;
+    const haLast = inds15.haCloses[inds15.haCloses.length - 1];
+    const haPrev = inds15.haCloses[inds15.haCloses.length - 2];
     
-    const macd15mLast = inds15.mRes[inds15.mRes.length - 1];
-    const macd15mPrev = inds15.mRes[inds15.mRes.length - 2];
-    const isMacd15mGold = macd15mPrev.histogram !== undefined && macd15mLast.histogram !== undefined && macd15mPrev.histogram < 0 && macd15mLast.histogram > 0;
-    const isMacd15mDead = macd15mPrev.histogram !== undefined && macd15mLast.histogram !== undefined && macd15mPrev.histogram > 0 && macd15mLast.histogram < 0;
+    const smaLast = inds15.smaVals[inds15.smaVals.length - 1];
+    const smaPrev = inds15.smaVals[inds15.smaVals.length - 2];
 
-    if (rsi5m <= 34 && rsi10m <= 34 && isMacd15mGold) decision = "LONG";
-    else if (rsi5m >= 67 && rsi10m >= 67 && isMacd15mDead) decision = "SHORT";
+    const isGoldenCross = haPrev < smaPrev && haLast > smaLast;
+    const isDeadCross = haPrev > smaPrev && haLast < smaLast;
+
+    if (isGoldenCross) decision = "LONG";
+    else if (isDeadCross) decision = "SHORT";
 
     // HOLD Fallback Base
-    let fallbackSummary = `[기본 지표] 5분 RSI(${rsi5m?.toFixed(1)}) & 10분 RSI(${rsi10m?.toFixed(1)}) 기준 관망`;
+    let fallbackSummary = `[기본 지표] 15분 하이킨아시(${haLast?.toFixed(2)}), 20SMA(${smaLast?.toFixed(2)}) 기준 관망`;
     if (decision === "LONG")
-      fallbackSummary = `[기본 지표] 5분/10분 RSI 과매도(<=34) & 15분 MACD 골든크로스 - 롱 진입`;
+      fallbackSummary = `[롱 진입] 15분 하이킨아시 캔들 종가가 20SMA 상향 돌파`;
     if (decision === "SHORT")
-      fallbackSummary = `[기본 지표] 5분/10분 RSI 과매수(>=67) & 15분 MACD 데드크로스 - 숏 진입`;
+      fallbackSummary = `[숏 진입] 15분 하이킨아시 캔들 종가가 20SMA 하향 돌파`;
 
     let analysis_summary = fallbackSummary;
     let win_probability = "0";
 
-    // 💡 [API 최적화 핵심 로직] 
+    // 💡 [API 최적화 핵심 로직]
     // 관망(HOLD) 상태일 때는 비싼 AI(Gemini) API를 호출하지 않고 실시간 자체 지표 텍스트만 바로 반환합니다.
     // 매수(LONG) 또는 매도(SHORT) 타점이 명확하게 나왔을 때만 AI API를 호출하여 정밀 분석을 수행합니다.
     // 이렇게 하면 15초마다 갱신해도 무료 API 한도 초과(429 에러)가 절대 발생하지 않습니다.
@@ -418,12 +423,12 @@ app.post("/api/analyze", async (req, res) => {
 - 당신은 트레이딩 알고리즘 시스템에 의해 사전 계산된 다음의 최종 매매 결정을 **무조건 항상** 출력해야 합니다.
 - **분석 대상:** ${symbol}
 - **사전 계산된 최종 진입 포지션:** ${decision}
-- **5분 RSI:** ${rsi5m.toFixed(2)}
-- **10분 RSI:** ${rsi10m.toFixed(2)}
-- **15분 MACD Histogram:** ${macd15mLast.histogram?.toFixed(4)}
+- **15분 하이킨아시 종가:** ${haLast?.toFixed(2)}
+- **15분 20 SMA:** ${smaLast?.toFixed(2)}
 
 # 분석 요약 가이드라인
-- 롱 진입 조건(5분, 10분 RSI <= 34 및 15분 MACD 골든크로스), 숏 진입 조건(5분, 10분 RSI >= 67 및 15분 MACD 데드크로스).
+- 롱 진입 요건: 15분 하이킨아시 캔들 종가가 20SMA를 위로 돌파.
+- 숏 진입 요건: 15분 하이킨아시 캔들 종가가 20SMA를 아래로 돌파.
 - reason: 위 수치와 사전 결정된 방향을 바탕으로 현재 차트 분위기를 한국어로 1줄 요약. 마크다운 없이 작성.
 - win_probability: 0에서 100 사이의 임의의 신뢰도값(정수).
 
@@ -473,27 +478,11 @@ app.post("/api/analyze", async (req, res) => {
       decision,
       analysis_summary,
       win_probability,
-      indicators: {
-        rsi: rsiValues.slice(-20),
-        stochRsi: mainInds.srVals.slice(-20),
-        macd: macdResult.slice(-20),
-      },
-      indicators5m: {
-        rsi: inds5.rVals.slice(-20),
-        stochRsi: inds5.srVals.slice(-20),
-        macd: inds5.mRes.slice(-20),
-      },
-      indicators10m: {
-        rsi: inds10.rVals.slice(-20),
-        stochRsi: inds10.srVals.slice(-20),
-        macd: inds10.mRes.slice(-20),
-      },
       indicators15m: {
-        rsi: inds15.rVals.slice(-20),
-        stochRsi: inds15.srVals.slice(-20),
-        macd: inds15.mRes.slice(-20),
+        haCloses: inds15.haCloses.slice(-20),
+        sma: inds15.smaVals.slice(-20),
       },
-      lastPrices: closes.slice(-20),
+      lastPrices: mainInds.cls.slice(-20),
     };
 
     // Update cache
@@ -506,7 +495,11 @@ app.post("/api/analyze", async (req, res) => {
 
     res.json(result);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    let errorMsg = error.message;
+    if (error.response && error.response.data) {
+      errorMsg = typeof error.response.data === "object" ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -544,7 +537,11 @@ app.get("/api/trade/balance", async (req, res) => {
       unrealizedPL: parseFloat(data.unrealizedPL || "0"),
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    let errorMsg = error.message;
+    if (error.response && error.response.data) {
+      errorMsg = typeof error.response.data === "object" ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -584,7 +581,11 @@ app.post("/api/trade/history", async (req, res) => {
 
     res.json(response.data.data);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    let errorMsg = error.message;
+    if (error.response && error.response.data) {
+      errorMsg = typeof error.response.data === "object" ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -619,7 +620,11 @@ app.post("/api/trade/positions", async (req, res) => {
 
     res.json(response.data.data);
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    let errorMsg = error.message;
+    if (error.response && error.response.data) {
+      errorMsg = typeof error.response.data === "object" ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    res.status(500).json({ error: errorMsg });
   }
 });
 
@@ -676,7 +681,201 @@ app.post("/api/trade/execute", async (req, res) => {
       slPrice: result.slPrice,
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    let errorMsg = error.message;
+    if (error.response && error.response.data) {
+      errorMsg = typeof error.response.data === "object" ? JSON.stringify(error.response.data) : error.response.data;
+    }
+    res.status(500).json({ error: errorMsg });
+  }
+});
+
+// --- BACKTEST ENDPOINT ---
+app.post("/api/backtest", async (req, res) => {
+  const { symbol, yearMonth, initialCapital = 10000, backtestOrderSize = 1000, tpPct = 1, slPct = 2, gridPct = 1 } = req.body;
+  if (!symbol || !yearMonth) {
+    return res.status(400).json({ error: "Missing symbol or yearMonth (e.g., '2024-05')" });
+  }
+
+  const tpDecimal = Number(tpPct) / 100;
+  const slDecimal = Number(slPct) / 100;
+  const gridDecimal = Number(gridPct) / 100;
+
+  const [year, month] = yearMonth.split("-");
+  const startObj = new Date(Date.UTC(parseInt(year), parseInt(month) - 1, 1, 0, 0, 0));
+  const start = startObj.getTime();
+  const endObj = new Date(Date.UTC(parseInt(year), parseInt(month), 1, 0, 0, 0));
+  const end = endObj.getTime() - 1;
+
+  let allCandles: any[] = [];
+  let currentStart = start;
+
+  try {
+    while (currentStart < end) {
+      let currentEnd = currentStart + 200 * 5 * 60 * 1000 - 1;
+      if (currentEnd > end) currentEnd = end;
+
+      const chunkRes = await axios.get(
+        "https://api.bitget.com/api/v2/mix/market/history-candles",
+        {
+          params: {
+            symbol,
+            productType: "USDT-FUTURES",
+            granularity: "5m",
+            limit: 200,
+            startTime: currentStart.toString(),
+            endTime: currentEnd.toString(),
+          },
+        },
+      );
+      if (chunkRes.data && chunkRes.data.data) {
+        allCandles.push(...chunkRes.data.data);
+      }
+      currentStart = currentEnd + 1;
+      await new Promise((r) => setTimeout(r, 60)); // Ratelimit protection
+    }
+
+    if (allCandles.length === 0) {
+      return res.status(404).json({ error: "No data found for this period." });
+    }
+
+    allCandles.sort((a, b) => parseInt(a[0]) - parseInt(b[0]));
+    const opens = allCandles.map((c) => parseFloat(c[1]));
+    const highs = allCandles.map((c) => parseFloat(c[2]));
+    const lows = allCandles.map((c) => parseFloat(c[3]));
+    const closes = allCandles.map((c) => parseFloat(c[4]));
+
+    const haCands = [];
+    for (let i = 0; i < allCandles.length; i++) {
+      if (i === 0) {
+        haCands.push({
+          open: opens[i],
+          high: highs[i],
+          low: lows[i],
+          close: (opens[i] + highs[i] + lows[i] + closes[i]) / 4,
+        });
+      } else {
+        const prev = haCands[i - 1];
+        const haOpen = (prev.open + prev.close) / 2;
+        const haClose = (opens[i] + highs[i] + lows[i] + closes[i]) / 4;
+        const haHigh = Math.max(highs[i], haOpen, haClose);
+        const haLow = Math.min(lows[i], haOpen, haClose);
+        haCands.push({ open: haOpen, high: haHigh, low: haLow, close: haClose });
+      }
+    }
+
+    const haCloses = haCands.map(c => c.close);
+    const smaVals = SMA.calculate({ values: haCloses, period: 20 });
+
+    const smaPad = haCloses.length - smaVals.length;
+
+    const initialBal = Number(initialCapital) || 10000;
+    let balance = initialBal;
+    const orderSize = Number(backtestOrderSize) || 1000;
+
+    let posSide: null | "LONG" | "SHORT" = null;
+    let avgPrice = 0;
+    let posAmount = 0;
+    let lastExecPrice = 0;
+    let winCount = 0;
+    let lossCount = 0;
+    let totalTrades = 0;
+    let spiderCount = 0;
+    let maxDrawdown = 0;
+    let peakBalance = balance;
+
+    // Simulation Loop
+    for (let i = smaPad + 1; i < closes.length; i++) {
+      const price = closes[i];
+
+      const haLast = haCloses[i];
+      const haPrev = haCloses[i - 1];
+      const smaLast = smaVals[i - smaPad];
+      const smaPrev = smaVals[i - 1 - smaPad];
+
+      const isGoldenCross = haPrev < smaPrev && haLast > smaLast;
+      const isDeadCross = haPrev > smaPrev && haLast < smaLast;
+
+      const currentEquity =
+        balance +
+        (posSide === "LONG"
+          ? ((price - avgPrice) / avgPrice) * posAmount
+          : posSide === "SHORT"
+            ? ((avgPrice - price) / avgPrice) * posAmount
+            : 0);
+
+      if (currentEquity > peakBalance) peakBalance = currentEquity;
+      const drawdown = ((peakBalance - currentEquity) / peakBalance) * 100;
+      if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+      if (!posSide) {
+        if (isGoldenCross) {
+          posSide = "LONG";
+          avgPrice = price;
+          lastExecPrice = price;
+          posAmount = orderSize;
+          totalTrades++;
+        } else if (isDeadCross) {
+          posSide = "SHORT";
+          avgPrice = price;
+          lastExecPrice = price;
+          posAmount = orderSize;
+          totalTrades++;
+        }
+      } else {
+        // Simple Risk Management (Stop Loss / Take Profit)
+        if (posSide === "LONG") {
+          if (price <= avgPrice * (1 - slDecimal)) {
+            // Stop Loss
+            const loss = ((price - avgPrice) / avgPrice) * posAmount;
+            balance += loss;
+            lossCount++;
+            posSide = null;
+          } else if (price >= avgPrice * (1 + tpDecimal)) {
+            // Take profit
+            const profit = ((price - avgPrice) / avgPrice) * posAmount;
+            balance += profit;
+            winCount++;
+            posSide = null;
+          }
+        } else if (posSide === "SHORT") {
+          if (price >= avgPrice * (1 + slDecimal)) {
+            // Stop Loss
+            const loss = ((avgPrice - price) / avgPrice) * posAmount;
+            balance += loss;
+            lossCount++;
+            posSide = null;
+          } else if (price <= avgPrice * (1 - tpDecimal)) {
+            // Take profit
+            const profit = ((avgPrice - price) / avgPrice) * posAmount;
+            balance += profit;
+            winCount++;
+            posSide = null;
+          }
+        }
+      }
+    }
+
+    if (posSide) {
+      const profit =
+        posSide === "LONG"
+          ? ((closes[closes.length - 1] - avgPrice) / avgPrice) * posAmount
+          : ((avgPrice - closes[closes.length - 1]) / avgPrice) * posAmount;
+      balance += profit;
+      if (profit > 0) winCount++;
+      else lossCount++;
+    }
+
+    res.json({
+      balance: balance.toFixed(2),
+      profit: (balance - initialBal).toFixed(2),
+      winCount,
+      lossCount,
+      totalTrades,
+      spiderCount,
+      maxDrawdown: maxDrawdown.toFixed(2) + "%",
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
   }
 });
 

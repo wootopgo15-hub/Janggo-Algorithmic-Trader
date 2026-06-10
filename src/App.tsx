@@ -11,7 +11,7 @@ import {
   RefreshCw,
   AlertCircle,
   BarChart2,
-  Zap,
+  Zap, Gamepad2,
   Settings,
   Shield,
   History,
@@ -25,6 +25,7 @@ import {
   Activity,
   CheckCircle2,
   XCircle,
+  Calendar,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -64,7 +65,7 @@ interface TradeLog {
 
 export default function App() {
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [granularity, setGranularity] = useState("5m");
+  const [granularity, setGranularity] = useState("15m");
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,13 +73,30 @@ export default function App() {
 
   // Trading States
   const [isAutoTrade, setIsAutoTrade] = useState(false);
+  const [isPaperTrading, setIsPaperTrading] = useState(true);
+  const [paperBalance, setPaperBalance] = useState(() => {
+    const saved = localStorage.getItem("janggo_paper_balance");
+    return saved ? parseFloat(saved) : 10000;
+  });
+  const [paperPositions, setPaperPositions] = useState<any[]>(() => {
+    const saved = localStorage.getItem("janggo_paper_positions");
+    return saved ? JSON.parse(saved) : [];
+  });
   const [orderSize, setOrderSize] = useState("15");
   const [takeProfit, setTakeProfit] = useState("1");
-  const [stopLoss, setStopLoss] = useState("0.5");
+  const [stopLoss, setStopLoss] = useState("2");
 
   const [editingLog, setEditingLog] = useState<TradeLog | null>(null);
   const [editTakeProfit, setEditTakeProfit] = useState("");
   const [editStopLoss, setEditStopLoss] = useState("");
+
+  const [isBacktestModalOpen, setIsBacktestModalOpen] = useState(false);
+  const [backtestStats, setBacktestStats] = useState<any>(null);
+  const [isBacktesting, setIsBacktesting] = useState(false);
+  const [backtestMonth, setBacktestMonth] = useState("2024-05");
+  const [backtestSymbol, setBacktestSymbol] = useState("BTCUSDT");
+  const [backtestCapital, setBacktestCapital] = useState("10000");
+  const [backtestOrderSize, setBacktestOrderSize] = useState("1000");
 
   const [apiKey, setApiKey] = useState(
     () => localStorage.getItem("janggo_bitget_apiKey") || "",
@@ -142,6 +160,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("janggo_trade_stats", JSON.stringify(stats));
   }, [stats]);
+
+  useEffect(() => {
+    localStorage.setItem("janggo_paper_balance", paperBalance.toString());
+  }, [paperBalance]);
+
+  useEffect(() => {
+    localStorage.setItem("janggo_paper_positions", JSON.stringify(paperPositions));
+  }, [paperPositions]);
+
 
   const [activeTab, setActiveTab] = useState<"analysis" | "trading">(
     "analysis",
@@ -208,6 +235,8 @@ export default function App() {
   }, [symbol]);
 
   const lastSignalRef = useRef<Record<string, Decision>>({});
+  const lastSpiderPriceRef = useRef<Record<string, number>>({});
+
 
   const effectiveApiUrl = window.location.origin.replace(/\/+$/, "");
 
@@ -389,32 +418,107 @@ function main() {
       const activeTp = customTp ?? takeProfit;
       const activeSl = customSl ?? stopLoss;
       const tSymbol = tradeSymbol || symbol;
-      const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
-          ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
-          ...(passphrase ? { "x-bitget-passphrase": passphrase } : {}),
-        },
-        body: JSON.stringify({
-          side,
-          symbol: tSymbol,
-          amount,
-          takeProfit: activeTp,
-          stopLoss: activeSl,
-        }),
-      });
-
-      const contentType = response.headers.get("content-type");
+      
       let data: any = {};
+      let isSuccess = false;
 
-      if (contentType && contentType.includes("application/json")) {
-        data = await response.json();
+      if (isPaperTrading) {
+        const currentPrice = analysis?.lastPrices ? analysis.lastPrices[analysis.lastPrices.length - 1] : 60000;
+        const tpPrice = side === "LONG" ? currentPrice * (1 + Number(activeTp) / 100) : currentPrice * (1 - Number(activeTp) / 100);
+        const slPrice = side === "LONG" ? currentPrice * (1 - Number(activeSl) / 100) : currentPrice * (1 + Number(activeSl) / 100);
+        
+        // Handle existing opposite position
+        setPaperPositions(prev => {
+           let updated = [...prev];
+           const existingIdx = updated.findIndex(p => p.symbol === tSymbol);
+           
+           if (existingIdx !== -1) {
+             const existing = updated[existingIdx];
+             if (existing.side !== side) {
+               // Close opposite position
+               const entry = existing.entryPrice;
+               const amountNum = Number(existing.amount);
+               let pnl = 0;
+               if (existing.side === "LONG") {
+                 pnl = (currentPrice - entry) / entry * amountNum;
+               } else {
+                 pnl = (entry - currentPrice) / entry * amountNum;
+               }
+               
+               setPaperBalance(b => b + pnl);
+               
+               // Add close log
+               setLogs(l => [{
+                 id: "CLOSE_" + Math.random().toString(36).substr(2, 9),
+                 side: "CLOSE",
+                 symbol: tSymbol,
+                 amount: existing.amount.toString(),
+                 timestamp: new Date().toISOString(),
+                 status: "SUCCESS",
+                 entryPrice: entry,
+                 pnl: pnl.toFixed(4),
+                 isClose: true,
+                 isOpenPos: false
+               }, ...l].slice(0, 50));
+               
+               updated.splice(existingIdx, 1);
+             } else {
+               // Same side, ignore or average up. Let's ignore for simple mock
+               console.log("Already holding", side, "for", tSymbol);
+             }
+           }
+           
+           // Open new position
+           const hasPos = updated.find(p => p.symbol === tSymbol);
+           if (!hasPos) {
+             updated.push({
+               id: "PAPER_" + Math.random().toString(36).substr(2, 9),
+               symbol: tSymbol,
+               side,
+               amount: amount,
+               entryPrice: currentPrice,
+               tpPrice,
+               slPrice
+             });
+           }
+           return updated;
+        });
+
+        data = {
+          entryPrice: currentPrice,
+          tpPrice: tpPrice.toFixed(2),
+          slPrice: slPrice.toFixed(2),
+          orderId: "PAPER_NEW",
+        };
+        isSuccess = true;
       } else {
-        const text = await response.text();
-        console.error("Trade Execution Non-JSON:", text);
-        data = { error: "서버 응답 형식이 올바르지 않습니다." };
+        const response = await fetch(effectiveApiUrl + "/api/trade/execute", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { "x-bitget-api-key": apiKey } : {}),
+            ...(secretKey ? { "x-bitget-secret-key": secretKey } : {}),
+            ...(passphrase ? { "x-bitget-passphrase": passphrase } : {}),
+          },
+          body: JSON.stringify({
+            side,
+            symbol: tSymbol,
+            amount,
+            takeProfit: activeTp,
+            stopLoss: activeSl,
+          }),
+        });
+
+        const contentType = response.headers.get("content-type");
+
+        if (contentType && contentType.includes("application/json")) {
+          data = await response.json();
+        } else {
+          const text = await response.text();
+          console.error("Trade Execution Non-JSON:", text);
+          data = { error: "서버 응답 형식이 올바르지 않습니다." };
+        }
+        isSuccess = response.ok;
       }
 
       const newLog: TradeLog = {
@@ -423,7 +527,7 @@ function main() {
         symbol: tSymbol,
         amount,
         timestamp: new Date().toISOString(),
-        status: response.ok ? "SUCCESS" : "FAILED",
+        status: isSuccess ? "SUCCESS" : "FAILED",
         reason: data.error,
         takeProfit: activeTp,
         stopLoss: activeSl,
@@ -433,11 +537,37 @@ function main() {
       };
 
       setLogs((prev) => [newLog, ...prev].slice(0, 50));
-      return response.ok;
+      return isSuccess;
     } catch (err) {
       console.error("Trade Execution Error:", err);
       return false;
     }
+  };
+
+  const runBacktest = async () => {
+    setIsBacktesting(true);
+    setBacktestStats(null);
+    try {
+      const response = await fetch(effectiveApiUrl + "/api/backtest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          symbol: backtestSymbol, 
+          yearMonth: backtestMonth,
+          initialCapital: Number(backtestCapital),
+          backtestOrderSize: Number(backtestOrderSize),
+          tpPct: Number(takeProfit),
+          slPct: Number(stopLoss),
+          gridPct: 1
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Backtest failed");
+      setBacktestStats(data);
+    } catch (err: any) {
+      alert("백테스팅 실패: " + err.message);
+    }
+    setIsBacktesting(false);
   };
 
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -729,6 +859,36 @@ function main() {
               new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
           );
 
+        // Spider (Grid) Logic
+        if (isAutoTrade) {
+          const currentOpenSymbols = currentOpenPositions.map((p: any) => p.symbol || p.instId?.replace("-FUTURES", "") || "UNKNOWN");
+          Object.keys(lastSpiderPriceRef.current).forEach(sym => {
+            if (!currentOpenSymbols.includes(sym)) {
+               delete lastSpiderPriceRef.current[sym];
+            }
+          });
+
+          currentOpenPositions.forEach((pos: any) => {
+            const posSymbol = pos.symbol || pos.instId?.replace("-FUTURES", "") || "UNKNOWN";
+            const side = pos.holdSide === "long" || pos.holdSide === "LONG" ? "LONG" : "SHORT";
+            const avgPrice = parseFloat(pos.openPriceAvg || pos.averageOpenPrice || pos.openAvgPrice || pos.openPrice || "0");
+            const markPrice = parseFloat(pos.markPrice || "0");
+
+            if (avgPrice > 0 && markPrice > 0) {
+              const lastExecPrice = lastSpiderPriceRef.current[posSymbol] || avgPrice;
+              if (side === "LONG" && markPrice <= lastExecPrice * 0.99) {
+                console.log(`[Spider] LONG triggered for ${posSymbol}: markPrice ${markPrice} <= lastExecPrice ${lastExecPrice} * 0.99 (avg: ${avgPrice})`);
+                lastSpiderPriceRef.current[posSymbol] = markPrice;
+                executeTrade("LONG", orderSize, true, undefined, undefined, posSymbol);
+              } else if (side === "SHORT" && markPrice >= lastExecPrice * 1.01) {
+                console.log(`[Spider] SHORT triggered for ${posSymbol}: markPrice ${markPrice} >= lastExecPrice ${lastExecPrice} * 1.01 (avg: ${avgPrice})`);
+                lastSpiderPriceRef.current[posSymbol] = markPrice;
+                executeTrade("SHORT", orderSize, true, undefined, undefined, posSymbol);
+              }
+            }
+          });
+        }
+
         setLogs((prev) => {
           let mergedLogs = [...prev];
 
@@ -842,10 +1002,8 @@ function main() {
     ? analysis.lastPrices.map((price, i) => ({
         time: i,
         price,
-        rsi: analysis.indicators.rsi[i] || 0,
-        macd: analysis.indicators.macd[i]?.MACD || 0,
-        signal: analysis.indicators.macd[i]?.signal || 0,
-        histogram: analysis.indicators.macd[i]?.histogram || 0,
+        haClose: analysis.indicators15m?.haCloses[i] || 0,
+        sma: analysis.indicators15m?.sma[i] || 0,
       }))
     : [];
 
@@ -912,36 +1070,61 @@ function main() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-[#161b22] p-1 rounded-lg border border-[#30363d]">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setActiveTab("analysis")}
-              className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-md transition-all",
-                activeTab === "analysis"
-                  ? "bg-[#30363d] text-white"
-                  : "text-slate-500 hover:text-slate-300",
-              )}
+              onClick={() => setIsBacktestModalOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-all border border-[#30363d] text-purple-400 hover:bg-[#30363d]"
             >
-              ANALYSIS
+              <Calendar className="w-3.5 h-3.5" />
+              BACKTEST
             </button>
-            <button
-              onClick={() => setActiveTab("trading")}
-              className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-md transition-all",
-                activeTab === "trading"
-                  ? "bg-[#30363d] text-white"
-                  : "text-slate-500 hover:text-slate-300",
-              )}
-            >
-              TRADING
-            </button>
+            <div className="flex items-center gap-1 bg-[#161b22] p-1 rounded-lg border border-[#30363d]">
+              <button
+                onClick={() => setActiveTab("analysis")}
+                className={cn(
+                  "px-4 py-1.5 text-xs font-medium rounded-md transition-all",
+                  activeTab === "analysis"
+                    ? "bg-[#30363d] text-white"
+                    : "text-slate-500 hover:text-slate-300",
+                )}
+              >
+                ANALYSIS
+              </button>
+              <button
+                onClick={() => setActiveTab("trading")}
+                className={cn(
+                  "px-4 py-1.5 text-xs font-medium rounded-md transition-all",
+                  activeTab === "trading"
+                    ? "bg-[#30363d] text-white"
+                    : "text-slate-500 hover:text-slate-300",
+                )}
+              >
+                TRADING
+              </button>
+            </div>
           </div>
         </header>
 
         {error && (
           <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-lg flex items-center gap-3 text-rose-500 text-sm">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <p>{error}</p>
+            <p className="whitespace-pre-wrap font-mono text-xs">
+              {error.includes("{") && error.includes("}") 
+                ? (() => {
+                    try {
+                      // Attempt to parse out basic Bitget JSON error
+                      const match = error.match(/(\{.*\})/);
+                      if (match) {
+                        const parsed = JSON.parse(match[1]);
+                        return error.replace(match[1], "") + " " + (parsed.msg || parsed.message || JSON.stringify(parsed, null, 2));
+                      }
+                      return error;
+                    } catch {
+                      return error;
+                    }
+                  })()
+                : error}
+            </p>
           </div>
         )}
 
@@ -1063,26 +1246,25 @@ function main() {
                               "데이터를 불러오는 중..."}
                         </p>
                       </div>
-                      <div className="mt-6 flex items-center gap-4 text-xs font-mono text-slate-500">
+                                            <div className="mt-6 flex items-center gap-4 text-xs font-mono text-slate-500">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-slate-400">RSI:</span>
-                          <span
-                            className={cn(
-                              analysis &&
-                                (analysis.indicators.rsi[
-                                  analysis.indicators.rsi.length - 1
-                                ] < 30
-                                  ? "text-emerald-500"
-                                  : analysis.indicators.rsi[
-                                        analysis.indicators.rsi.length - 1
-                                      ] > 70
-                                    ? "text-rose-500"
-                                    : ""),
-                            )}
-                          >
-                            {analysis?.indicators.rsi[
-                              analysis.indicators.rsi.length - 1
-                            ].toFixed(2) || "0.00"}
+                          <span className="text-slate-400">Heikin-Ashi:</span>
+                          <span className="text-white">
+                            {analysis?.indicators15m
+                              ? analysis.indicators15m.haCloses[
+                                  analysis.indicators15m.haCloses.length - 1
+                                ]?.toFixed(2)
+                              : "--"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 ml-4">
+                          <span className="text-slate-400">SMA(20):</span>
+                          <span className="text-blue-400">
+                            {analysis?.indicators15m
+                              ? analysis.indicators15m.sma[
+                                  analysis.indicators15m.sma.length - 1
+                                ]?.toFixed(2)
+                              : "--"}
                           </span>
                         </div>
                       </div>
@@ -1099,17 +1281,15 @@ function main() {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between p-3 bg-[#0d1117] rounded-xl border border-[#30363d]">
                           <span className="text-xs text-slate-400">
-                            RSI 30 이하에서 반등 (과매도 탈출)
+                            직전 캔들 종가 &lt; SMA (하단 위치)
                           </span>
                           {analysis &&
-                          analysis.indicators.rsi[
-                            analysis.indicators.rsi.length - 2
-                          ] <= 30 &&
-                          analysis.indicators.rsi[
-                            analysis.indicators.rsi.length - 1
-                          ] >
-                            analysis.indicators.rsi[
-                              analysis.indicators.rsi.length - 2
+                          analysis.indicators15m &&
+                          analysis.indicators15m.haCloses[
+                            analysis.indicators15m.haCloses.length - 2
+                          ] <
+                            analysis.indicators15m.sma[
+                              analysis.indicators15m.sma.length - 2
                             ] ? (
                             <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
                               <Play className="w-3 h-3 text-white fill-current" />
@@ -1120,22 +1300,16 @@ function main() {
                         </div>
                         <div className="flex items-center justify-between p-3 bg-[#0d1117] rounded-xl border border-[#30363d]">
                           <span className="text-xs text-slate-400">
-                            MACD 골든 크로스 (Signal 돌파)
+                            현재 캔들 종가 &gt; SMA (골든 크로스 돌파)
                           </span>
                           {analysis &&
-                          analysis.indicators.macd.length >= 2 &&
-                          analysis.indicators.macd[
-                            analysis.indicators.macd.length - 2
-                          ]?.MACD! <
-                            analysis.indicators.macd[
-                              analysis.indicators.macd.length - 2
-                            ]?.signal! &&
-                          analysis.indicators.macd[
-                            analysis.indicators.macd.length - 1
-                          ]?.MACD! >
-                            analysis.indicators.macd[
-                              analysis.indicators.macd.length - 1
-                            ]?.signal! ? (
+                          analysis.indicators15m &&
+                          analysis.indicators15m.haCloses[
+                            analysis.indicators15m.haCloses.length - 1
+                          ] >
+                            analysis.indicators15m.sma[
+                              analysis.indicators15m.sma.length - 1
+                            ] ? (
                             <div className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
                               <Play className="w-3 h-3 text-white fill-current" />
                             </div>
@@ -1154,17 +1328,15 @@ function main() {
                       <div className="space-y-3">
                         <div className="flex items-center justify-between p-3 bg-[#0d1117] rounded-xl border border-[#30363d]">
                           <span className="text-xs text-slate-400">
-                            RSI 70 이상에서 하락 반전 (과열 해소)
+                            직전 캔들 종가 &gt; SMA (상단 위치)
                           </span>
                           {analysis &&
-                          analysis.indicators.rsi[
-                            analysis.indicators.rsi.length - 2
-                          ] >= 70 &&
-                          analysis.indicators.rsi[
-                            analysis.indicators.rsi.length - 1
-                          ] <
-                            analysis.indicators.rsi[
-                              analysis.indicators.rsi.length - 2
+                          analysis.indicators15m &&
+                          analysis.indicators15m.haCloses[
+                            analysis.indicators15m.haCloses.length - 2
+                          ] >
+                            analysis.indicators15m.sma[
+                              analysis.indicators15m.sma.length - 2
                             ] ? (
                             <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center">
                               <Square className="w-3 h-3 text-white fill-current" />
@@ -1175,22 +1347,16 @@ function main() {
                         </div>
                         <div className="flex items-center justify-between p-3 bg-[#0d1117] rounded-xl border border-[#30363d]">
                           <span className="text-xs text-slate-400">
-                            MACD 데드 크로스 (Signal 하향)
+                            현재 캔들 종가 &lt; SMA (데드 크로스 하향)
                           </span>
                           {analysis &&
-                          analysis.indicators.macd.length >= 2 &&
-                          analysis.indicators.macd[
-                            analysis.indicators.macd.length - 2
-                          ]?.MACD! >
-                            analysis.indicators.macd[
-                              analysis.indicators.macd.length - 2
-                            ]?.signal! &&
-                          analysis.indicators.macd[
-                            analysis.indicators.macd.length - 1
-                          ]?.MACD! <
-                            analysis.indicators.macd[
-                              analysis.indicators.macd.length - 1
-                            ]?.signal! ? (
+                          analysis.indicators15m &&
+                          analysis.indicators15m.haCloses[
+                            analysis.indicators15m.haCloses.length - 1
+                          ] <
+                            analysis.indicators15m.sma[
+                              analysis.indicators15m.sma.length - 1
+                            ] ? (
                             <div className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center">
                               <Square className="w-3 h-3 text-white fill-current" />
                             </div>
@@ -1202,40 +1368,11 @@ function main() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 gap-6">
                     <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 h-[400px]">
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xs font-mono text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                          <BarChart2 className="w-3 h-3" />
-                          MACD & Price Convergence
-                        </h3>
-                        {analysis && analysis.indicators.macd.length > 0 && (
-                          <div className="text-[10px] flex items-center gap-2">
-                            <span
-                              className={cn(
-                                "px-2 py-0.5 rounded",
-                                (analysis.indicators.macd[
-                                  analysis.indicators.macd.length - 1
-                                ]?.MACD || 0) >
-                                  (analysis.indicators.macd[
-                                    analysis.indicators.macd.length - 1
-                                  ]?.signal || 0)
-                                  ? "bg-emerald-500/10 text-emerald-500"
-                                  : "bg-rose-500/10 text-rose-500",
-                              )}
-                            >
-                              {(analysis.indicators.macd[
-                                analysis.indicators.macd.length - 1
-                              ]?.MACD || 0) >
-                              (analysis.indicators.macd[
-                                analysis.indicators.macd.length - 1
-                              ]?.signal || 0)
-                                ? "BULLISH CROSS"
-                                : "BEARISH CROSS"}
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                      <h3 className="text-xs font-mono text-slate-500 mb-4 uppercase tracking-widest flex items-center justify-between">
+                        15m Heikin-Ashi & SMA (20) Chart
+                      </h3>
                       <ResponsiveContainer
                         width="100%"
                         height="90%"
@@ -1249,66 +1386,8 @@ function main() {
                             vertical={false}
                           />
                           <XAxis dataKey="time" hide />
-                          <YAxis hide domain={["auto", "auto"]} />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "#0d1117",
-                              border: "1px solid #30363d",
-                              borderRadius: "8px",
-                            }}
-                          />
-                          <Bar
-                            dataKey="histogram"
-                            fill="#475569"
-                            opacity={0.3}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="price"
-                            stroke="#3b82f6"
-                            strokeWidth={2}
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="macd"
-                            stroke="#f59e0b"
-                            strokeWidth={1.5}
-                            dot={false}
-                          />
-                          <Line
-                            type="monotone"
-                            dataKey="signal"
-                            stroke="#8b5cf6"
-                            strokeWidth={1.5}
-                            dot={false}
-                          />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl p-6 h-[400px]">
-                      <h3 className="text-xs font-mono text-slate-500 mb-4 uppercase tracking-widest flex items-center justify-between">
-                        Relative Strength Index (14)
-                        <span className="text-[10px] text-indigo-400 bg-indigo-400/10 px-2 py-0.5 rounded">
-                          Strategy Zones
-                        </span>
-                      </h3>
-                      <ResponsiveContainer
-                        width="100%"
-                        height="90%"
-                        minWidth={1}
-                        minHeight={1}
-                      >
-                        <AreaChart data={chartData}>
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            stroke="#30363d"
-                            vertical={false}
-                          />
-                          <XAxis dataKey="time" hide />
-                          <YAxis
-                            domain={[0, 100]}
-                            ticks={[30, 70]}
+                          <YAxis 
+                            domain={["auto", "auto"]} 
                             tick={{ fill: "#4b5563", fontSize: 10 }}
                           />
                           <Tooltip
@@ -1318,42 +1397,23 @@ function main() {
                               borderRadius: "8px",
                             }}
                           />
-                          <ReferenceLine
-                            y={70}
-                            stroke="#f43f5e"
-                            strokeDasharray="3 3"
-                            label={{
-                              position: "right",
-                              value: "SHORT ZONE",
-                              fill: "#f43f5e",
-                              fontSize: 10,
-                            }}
-                          />
-                          <ReferenceLine
-                            y={30}
-                            stroke="#10b981"
-                            strokeDasharray="3 3"
-                            label={{
-                              position: "right",
-                              value: "LONG ZONE",
-                              fill: "#10b981",
-                              fontSize: 10,
-                            }}
+                          <Line
+                            type="monotone"
+                            dataKey="haClose"
+                            stroke="#3b82f6"
+                            strokeWidth={2}
+                            dot={false}
+                            name="HA Close"
                           />
                           <Line
                             type="monotone"
-                            dataKey="rsi"
-                            stroke="#8b5cf6"
+                            dataKey="sma"
+                            stroke="#f59e0b"
                             strokeWidth={2}
                             dot={false}
+                            name="SMA (20)"
                           />
-                          <Area
-                            type="monotone"
-                            dataKey="rsi"
-                            fill="#8b5cf6"
-                            fillOpacity={0.1}
-                          />
-                        </AreaChart>
+                        </ComposedChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
@@ -1367,17 +1427,18 @@ function main() {
                       </h4>
                       <ul className="text-xs text-slate-400 space-y-2 list-disc pl-4">
                         <li>
-                          RSI가{" "}
+                          하이킨아시 캔들 종가가 SMA 선{" "}
                           <span className="text-emerald-500 font-bold">
-                            30 이하
+                            아래
                           </span>
-                          에서 반등 (과매도 탈출)
+                          에 위치하다가
                         </li>
                         <li>
-                          MACD Line이 Signal Line을{" "}
+                          현재 캔들 종가가 SMA 선을{" "}
                           <span className="text-emerald-500 font-bold">
                             상향 돌파 (Golden Cross)
                           </span>
+                          할 때 매수
                         </li>
                       </ul>
                     </div>
@@ -1388,17 +1449,18 @@ function main() {
                       </h4>
                       <ul className="text-xs text-slate-400 space-y-2 list-disc pl-4">
                         <li>
-                          RSI가{" "}
+                           하이킨아시 캔들 종가가 SMA 선{" "}
                           <span className="text-rose-500 font-bold">
-                            70 이상
+                            위
                           </span>
-                          에서 하락 반전 (과열 해소)
+                          에 위치하다가
                         </li>
                         <li>
-                          MACD Line이 Signal Line을{" "}
+                          현재 캔들 종가가 SMA 선을{" "}
                           <span className="text-rose-500 font-bold">
                             하향 돌파 (Dead Cross)
                           </span>
+                          할 때 매도
                         </li>
                       </ul>
                     </div>
@@ -1432,7 +1494,28 @@ function main() {
                       <div
                         className={cn(
                           "absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-all",
-                          isAutoTrade ? "left-5.5" : "left-1",
+                          isAutoTrade ? "left-[22px]" : "left-1",
+                        )}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-4 border-t border-[#30363d] mt-4">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <Gamepad2 className="w-4 h-4 text-purple-500" />
+                      Paper Trading (모의 투자)
+                    </h3>
+                    <div
+                      onClick={() => setIsPaperTrading(!isPaperTrading)}
+                      className={cn(
+                        "w-10 h-5 rounded-full cursor-pointer transition-all relative border border-[#30363d]",
+                        isPaperTrading ? "bg-purple-500" : "bg-[#21262d]",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "absolute top-0.5 w-3.5 h-3.5 bg-white rounded-full transition-all",
+                          isPaperTrading ? "left-[22px]" : "left-1",
                         )}
                       />
                     </div>
@@ -1464,97 +1547,20 @@ function main() {
                         )}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mb-2">
-                      {/* 5m Indicators */}
-                      <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
-                        <div className="absolute top-0 right-0 bg-blue-500/10 text-blue-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">
-                          5m
-                        </div>
-                        <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
-                          RSI / MACD
-                        </span>
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={cn(
-                              "text-lg font-mono font-bold flex items-center",
-                              analysis?.indicators5m &&
-                                (analysis.indicators5m.rsi[
-                                  analysis.indicators5m.rsi.length - 1
-                                ] < 30
-                                  ? "text-emerald-400"
-                                  : analysis.indicators5m.rsi[
-                                        analysis.indicators5m.rsi.length - 1
-                                      ] > 70
-                                    ? "text-rose-400"
-                                    : "text-slate-200"),
-                            )}
-                          >
-                            {analysis?.indicators5m ? (
-                              analysis.indicators5m.rsi[
-                                analysis.indicators5m.rsi.length - 1
-                              ].toFixed(2)
-                            ) : (
-                              <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
-                            )}
-                          </span>
-                          <span
-                            className={cn(
-                              "text-[10px] font-mono font-bold uppercase",
-                              analysis?.indicators5m &&
-                                analysis.indicators5m.macd.length >= 2 &&
-                                (analysis.indicators5m.macd[
-                                  analysis.indicators5m.macd.length - 1
-                                ]?.MACD! >
-                                analysis.indicators5m.macd[
-                                  analysis.indicators5m.macd.length - 1
-                                ]?.signal!
-                                  ? "text-emerald-400"
-                                  : "text-rose-400"),
-                            )}
-                          >
-                            {analysis?.indicators5m
-                              ? analysis.indicators5m.macd.length >= 2
-                                ? analysis.indicators5m.macd[
-                                    analysis.indicators5m.macd.length - 1
-                                  ]?.MACD! >
-                                  analysis.indicators5m.macd[
-                                    analysis.indicators5m.macd.length - 1
-                                  ]?.signal!
-                                  ? "GOLD"
-                                  : "DEAD"
-                                : "CALC"
-                              : ""}
-                          </span>
-                        </div>
-                      </div>
-
+                    <div className="grid grid-cols-1 gap-3 mb-2">
                       {/* 15m Indicators */}
                       <div className="flex flex-col bg-[#0d1117] border border-[#30363d] p-3 rounded-xl justify-center relative overflow-hidden">
                         <div className="absolute top-0 right-0 bg-purple-500/10 text-purple-400 text-[9px] px-1.5 py-0.5 rounded-bl-lg font-bold">
                           15m
                         </div>
                         <span className="text-xs text-slate-400 font-mono mb-1 mt-2">
-                          RSI / MACD
+                          HA 종가 & SMA(20)
                         </span>
                         <div className="flex items-center justify-between">
-                          <span
-                            className={cn(
-                              "text-lg font-mono font-bold flex items-center",
-                              analysis?.indicators15m &&
-                                (analysis.indicators15m.rsi[
-                                  analysis.indicators15m.rsi.length - 1
-                                ] < 30
-                                  ? "text-emerald-400"
-                                  : analysis.indicators15m.rsi[
-                                        analysis.indicators15m.rsi.length - 1
-                                      ] > 70
-                                    ? "text-rose-400"
-                                    : "text-slate-200"),
-                            )}
-                          >
+                          <span className="text-lg font-mono font-bold flex items-center text-slate-200">
                             {analysis?.indicators15m ? (
-                              analysis.indicators15m.rsi[
-                                analysis.indicators15m.rsi.length - 1
+                              analysis.indicators15m.haCloses[
+                                analysis.indicators15m.haCloses.length - 1
                               ].toFixed(2)
                             ) : (
                               <RefreshCw className="w-4 h-4 animate-spin opacity-50" />
@@ -1564,28 +1570,25 @@ function main() {
                             className={cn(
                               "text-[10px] font-mono font-bold uppercase",
                               analysis?.indicators15m &&
-                                analysis.indicators15m.macd.length >= 2 &&
-                                (analysis.indicators15m.macd[
-                                  analysis.indicators15m.macd.length - 1
-                                ]?.MACD! >
-                                analysis.indicators15m.macd[
-                                  analysis.indicators15m.macd.length - 1
-                                ]?.signal!
+                                analysis.indicators15m.haCloses[
+                                  analysis.indicators15m.haCloses.length - 1
+                                ] >
+                                analysis.indicators15m.sma[
+                                  analysis.indicators15m.sma.length - 1
+                                ]
                                   ? "text-emerald-400"
-                                  : "text-rose-400"),
+                                  : "text-rose-400",
                             )}
                           >
                             {analysis?.indicators15m
-                              ? analysis.indicators15m.macd.length >= 2
-                                ? analysis.indicators15m.macd[
-                                    analysis.indicators15m.macd.length - 1
-                                  ]?.MACD! >
-                                  analysis.indicators15m.macd[
-                                    analysis.indicators15m.macd.length - 1
-                                  ]?.signal!
-                                  ? "GOLD"
-                                  : "DEAD"
-                                : "CALC"
+                                ? analysis.indicators15m.haCloses[
+                                    analysis.indicators15m.haCloses.length - 1
+                                  ] >
+                                  analysis.indicators15m.sma[
+                                    analysis.indicators15m.sma.length - 1
+                                  ]
+                                  ? "UP"
+                                  : "DOWN"
                               : ""}
                           </span>
                         </div>
@@ -1732,7 +1735,7 @@ function main() {
                       AUTO-PILOT STATUS (LIMIT ORDER)
                     </div>
                     <p className="text-[10px] text-slate-500 leading-relaxed">
-                      자동 매매는 RSI/MACD 변동 시 즉시 체결됩니다. 수수료
+                      자동 매매는 Heikin-Ashi와 SMA 변동 시 즉시 체결됩니다. 수수료
                       절감을 위해 시장가(Market)가 아닌 <b>지정가(Limit)</b>로
                       진입하며 최적의 호가를 계산합니다. 비트겟 API 키가 서버
                       설정에 등록되어 있어야 작동합니다.
@@ -1947,6 +1950,10 @@ function main() {
                   <button
                     onClick={() => {
                       setLogs([]);
+                      if (isPaperTrading) {
+                        setPaperBalance(10000);
+                        setPaperPositions([]);
+                      }
                     }}
                     className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/10 text-[10px] text-rose-500 hover:bg-rose-500/20 transition-colors uppercase font-mono border border-rose-500/20"
                   >
@@ -1959,9 +1966,11 @@ function main() {
                         Wallet Balance
                       </span>
                       <span className="text-xl font-bold text-white font-mono">
-                        {stats.currentEquity !== null
-                          ? `$${stats.currentEquity.toFixed(2)}`
-                          : "---"}
+                        {isPaperTrading 
+                          ? `${paperBalance.toFixed(2)}`
+                          : (stats.currentEquity !== null
+                              ? `${stats.currentEquity.toFixed(2)}`
+                              : "---")}
                       </span>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -1991,13 +2000,31 @@ function main() {
                         <span
                           className={cn(
                             "text-[10px] font-mono",
-                            stats.unrealizedPL >= 0
-                              ? "text-emerald-500/70"
-                              : "text-rose-500/70",
+                            isPaperTrading 
+                              ? (paperPositions.reduce((sum, p) => {
+                                  const cPrice = analysis?.lastPrices ? analysis.lastPrices[analysis.lastPrices.length - 1] : p.entryPrice;
+                                  const pl = p.side === "LONG" 
+                                    ? (cPrice - p.entryPrice) / p.entryPrice * Number(p.amount)
+                                    : (p.entryPrice - cPrice) / p.entryPrice * Number(p.amount);
+                                  return sum + pl;
+                                }, 0) >= 0 ? "text-emerald-500/70" : "text-rose-500/70")
+                              : (stats.unrealizedPL >= 0 ? "text-emerald-500/70" : "text-rose-500/70")
                           )}
                         >
-                          (Open: {stats.unrealizedPL > 0 ? "+" : ""}
-                          {(stats.unrealizedPL || 0).toFixed(2)})
+                          (Open: {isPaperTrading ? (
+                            (() => {
+                              const upnl = paperPositions.reduce((sum, p) => {
+                                  const cPrice = analysis?.lastPrices ? analysis.lastPrices[analysis.lastPrices.length - 1] : p.entryPrice;
+                                  const pl = p.side === "LONG" 
+                                    ? (cPrice - p.entryPrice) / p.entryPrice * Number(p.amount)
+                                    : (p.entryPrice - cPrice) / p.entryPrice * Number(p.amount);
+                                  return sum + pl;
+                              }, 0);
+                              return `${upnl > 0 ? "+" : ""}${upnl.toFixed(2)}`;
+                            })()
+                          ) : (
+                            `${stats.unrealizedPL > 0 ? "+" : ""}${(stats.unrealizedPL || 0).toFixed(2)}`
+                          )})
                         </span>
                       </div>
                     </div>
@@ -2287,456 +2314,39 @@ function main() {
                 </button>
               </div>
               <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
-                {/* 5m timeframe */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
-                    5분 봉 (5m Timeframe)
+                
+                {/* 15m timeframe Heikin-Ashi */}
+                <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                  <h4 className="text-[10px] uppercase font-mono text-slate-500 mb-2">
+                    15분 봉 (15m Timeframe) - Heikin-Ashi & 20 SMA
                   </h4>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-[#0a0c10] p-4 rounded-xl border border-[#30363d]">
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] uppercase font-mono text-slate-500">
-                          RSI
-                        </span>
-                        {analysis?.indicators5m ? (
-                          analysis.indicators5m.rsi[
-                            analysis.indicators5m.rsi.length - 1
-                          ] <= 34 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators5m.rsi[
-                              analysis.indicators5m.rsi.length - 1
-                            ] >= 67 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
-                        {analysis?.indicators5m
-                          ? analysis.indicators5m.rsi[
-                              analysis.indicators5m.rsi.length - 1
-                            ].toFixed(2)
-                          : "--"}
-                      </div>
-                    </div>
-
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          Stoch RSI
-                        </span>
-                        {analysis?.indicators5m?.stochRsi ? (
-                          analysis.indicators5m.stochRsi[
-                            analysis.indicators5m.stochRsi.length - 1
-                          ].k <= 20 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators5m.stochRsi[
-                              analysis.indicators5m.stochRsi.length - 1
-                            ].k >= 80 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono flex items-end gap-1">
-                        {analysis?.indicators5m?.stochRsi
-                          ? analysis.indicators5m.stochRsi[
-                              analysis.indicators5m.stochRsi.length - 1
-                            ].k.toFixed(2)
-                          : "--"}
-                        <span className="text-xs text-slate-500 font-normal pb-1">
-                          K
+                          Heikin-Ashi 종가
                         </span>
                       </div>
-                    </div>
-
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          MACD
-                        </span>
-                        {analysis?.indicators5m &&
-                        analysis.indicators5m.macd.length >= 2 ? (
-                          (() => {
-                            const last =
-                              analysis.indicators5m.macd[
-                                analysis.indicators5m.macd.length - 1
-                              ];
-                            const prev =
-                              analysis.indicators5m.macd[
-                                analysis.indicators5m.macd.length - 2
-                              ];
-                            const isGold =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram < 0 &&
-                              last.histogram > 0;
-                            const isDead =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram > 0 &&
-                              last.histogram < 0;
-
-                            if (isGold)
-                              return (
-                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (골든)
-                                </span>
-                              );
-                            if (isDead)
-                              return (
-                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (데드)
-                                </span>
-                              );
-                            return (
-                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                <Minus className="w-3 h-3" /> 대기 (진행중)
-                              </span>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
-                        {analysis?.indicators5m &&
-                        analysis.indicators5m.macd.length > 0
-                          ? (
-                              analysis.indicators5m.macd[
-                                analysis.indicators5m.macd.length - 1
-                              ].MACD || 0
-                            ).toFixed(2)
-                          : "--"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 10m timeframe */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
-                    10분 봉 (10m Timeframe)
-                  </h4>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          RSI
-                        </span>
-                        {analysis?.indicators10m ? (
-                          analysis.indicators10m.rsi[
-                            analysis.indicators10m.rsi.length - 1
-                          ] <= 34 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators10m.rsi[
-                              analysis.indicators10m.rsi.length - 1
-                            ] >= 67 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
-                        {analysis?.indicators10m
-                          ? analysis.indicators10m.rsi[
-                              analysis.indicators10m.rsi.length - 1
-                            ].toFixed(2)
-                          : "--"}
-                      </div>
-                    </div>
-
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          Stoch RSI
-                        </span>
-                        {analysis?.indicators10m?.stochRsi ? (
-                          analysis.indicators10m.stochRsi[
-                            analysis.indicators10m.stochRsi.length - 1
-                          ].k <= 20 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators10m.stochRsi[
-                              analysis.indicators10m.stochRsi.length - 1
-                            ].k >= 80 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono flex items-end gap-1">
-                        {analysis?.indicators10m?.stochRsi
-                          ? analysis.indicators10m.stochRsi[
-                              analysis.indicators10m.stochRsi.length - 1
-                            ].k.toFixed(2)
-                          : "--"}
-                        <span className="text-xs text-slate-500 font-normal pb-1">
-                          K
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          MACD
-                        </span>
-                        {analysis?.indicators10m &&
-                        analysis.indicators10m.macd.length >= 2 ? (
-                          (() => {
-                            const last =
-                              analysis.indicators10m.macd[
-                                analysis.indicators10m.macd.length - 1
-                              ];
-                            const prev =
-                              analysis.indicators10m.macd[
-                                analysis.indicators10m.macd.length - 2
-                              ];
-                            const isGold =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram < 0 &&
-                              last.histogram > 0;
-                            const isDead =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram > 0 &&
-                              last.histogram < 0;
-
-                            if (isGold)
-                              return (
-                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (골든)
-                                </span>
-                              );
-                            if (isDead)
-                              return (
-                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (데드)
-                                </span>
-                              );
-                            return (
-                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                <Minus className="w-3 h-3" /> 대기 (진행중)
-                              </span>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
-                        {analysis?.indicators10m &&
-                        analysis.indicators10m.macd.length > 0
-                          ? (
-                              analysis.indicators10m.macd[
-                                analysis.indicators10m.macd.length - 1
-                              ].MACD || 0
-                            ).toFixed(2)
-                          : "--"}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 15m timeframe */}
-                <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-slate-400 border-b border-[#30363d] pb-2">
-                    15분 봉 (15m Timeframe)
-                  </h4>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          RSI
-                        </span>
-                        {analysis?.indicators15m ? (
-                          analysis.indicators15m.rsi[
-                            analysis.indicators15m.rsi.length - 1
-                          ] <= 34 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators15m.rsi[
-                              analysis.indicators15m.rsi.length - 1
-                            ] >= 67 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
+                      <div className="text-xl font-bold font-mono text-white">
                         {analysis?.indicators15m
-                          ? analysis.indicators15m.rsi[
-                              analysis.indicators15m.rsi.length - 1
-                            ].toFixed(2)
+                          ? analysis.indicators15m.haCloses[
+                              analysis.indicators15m.haCloses.length - 1
+                            ]?.toFixed(2)
                           : "--"}
                       </div>
                     </div>
 
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
+                    <div className="bg-[#0a0c10] p-4 rounded-xl border border-[#30363d]">
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] uppercase font-mono text-slate-500">
-                          Stoch RSI
-                        </span>
-                        {analysis?.indicators15m?.stochRsi ? (
-                          analysis.indicators15m.stochRsi[
-                            analysis.indicators15m.stochRsi.length - 1
-                          ].k <= 20 ? (
-                            <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매도)
-                            </span>
-                          ) : analysis.indicators15m.stochRsi[
-                              analysis.indicators15m.stochRsi.length - 1
-                            ].k >= 80 ? (
-                            <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> 정상 (과매수)
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                              <Minus className="w-3 h-3" /> 대기 (중립구간)
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono flex items-end gap-1">
-                        {analysis?.indicators15m?.stochRsi
-                          ? analysis.indicators15m.stochRsi[
-                              analysis.indicators15m.stochRsi.length - 1
-                            ].k.toFixed(2)
-                          : "--"}
-                        <span className="text-xs text-slate-500 font-normal pb-1">
-                          K
+                          20 SMA
                         </span>
                       </div>
-                    </div>
-
-                    <div className="bg-[#161b22] p-4 rounded-xl border border-[#30363d]">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] uppercase font-mono text-slate-500">
-                          MACD
-                        </span>
-                        {analysis?.indicators15m &&
-                        analysis.indicators15m.macd.length >= 2 ? (
-                          (() => {
-                            const last =
-                              analysis.indicators15m.macd[
-                                analysis.indicators15m.macd.length - 1
-                              ];
-                            const prev =
-                              analysis.indicators15m.macd[
-                                analysis.indicators15m.macd.length - 2
-                              ];
-                            const isGold =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram < 0 &&
-                              last.histogram > 0;
-                            const isDead =
-                              prev.histogram !== undefined &&
-                              last.histogram !== undefined &&
-                              prev.histogram > 0 &&
-                              last.histogram < 0;
-
-                            if (isGold)
-                              return (
-                                <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (골든)
-                                </span>
-                              );
-                            if (isDead)
-                              return (
-                                <span className="text-[10px] text-rose-400 font-mono bg-rose-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                  <CheckCircle2 className="w-3 h-3" /> 정상
-                                  (데드)
-                                </span>
-                              );
-                            return (
-                              <span className="text-[10px] text-slate-400 font-mono bg-slate-500/10 px-2 py-0.5 rounded flex items-center gap-1">
-                                <Minus className="w-3 h-3" /> 대기 (진행중)
-                              </span>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-[10px] text-slate-500">
-                            데이터 없음
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold font-mono">
-                        {analysis?.indicators15m &&
-                        analysis.indicators15m.macd.length > 0
-                          ? (
-                              analysis.indicators15m.macd[
-                                analysis.indicators15m.macd.length - 1
-                              ].MACD || 0
-                            ).toFixed(2)
+                      <div className="text-xl font-bold font-mono text-white">
+                        {analysis?.indicators15m
+                          ? analysis.indicators15m.sma[
+                              analysis.indicators15m.sma.length - 1
+                            ]?.toFixed(2)
                           : "--"}
                       </div>
                     </div>
@@ -2751,14 +2361,12 @@ function main() {
                     <span className="text-emerald-400 font-bold">
                       LONG 진입 조건:
                     </span>{" "}
-                    5분 RSI &lt;= 34 &amp; 10분 RSI &lt;= 34 &amp; 15분 MACD
-                    골든크로스 동시 만족
+                    직전 캔들 종가가 SMA 아래에 있었고, 현재 종가가 SMA 상향 돌파 (골든 크로스)
                     <br />
                     <span className="text-rose-400 font-bold mt-1 inline-block">
                       SHORT 진입 조건:
                     </span>{" "}
-                    5분 RSI &gt;= 67 &amp; 10분 RSI &gt;= 67 &amp; 15분 MACD
-                    데드크로스 동시 만족
+                    직전 캔들 종가가 SMA 위에 있었고, 현재 종가가 SMA 하향 돌파 (데드 크로스)
                     <br />
                     <br />
                     <strong>현재 예측된 최종 포지션: </strong>
@@ -2792,8 +2400,7 @@ function main() {
             {logs.filter((l) => l.isOpenPos).length} | close:{" "}
             {logs.filter((l) => l.isClose).length}
             <br />
-            STRATEGY_RULES: RSI_OVERSOLD_EXIT (30) OR MACD_GOLDEN_CROSS == LONG
-            | RSI_OVERBOUGHT_FALLING (70) OR MACD_DEAD_CROSS == SHORT
+            STRATEGY_RULES: HEIKIN_ASHI_CLOSE CROSSES_ABOVE SMA(20) == LONG | HEIKIN_ASHI_CLOSE CROSSES_BELOW SMA(20) == SHORT
             <br />
             SYSTEM_STATUS: OPERATIONAL | DATA_SOURCE: BITGET_V2_MIX_API |
             IA_MODEL: GEMINI_FLASH_LATEST
@@ -2908,6 +2515,180 @@ function main() {
                     <Play className="w-4 h-4" />
                     Resend Signal
                   </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Backtester Modal */}
+        <AnimatePresence>
+          {isBacktestModalOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+              onClick={() => setIsBacktestModalOpen(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.95 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0.95 }}
+                className="bg-[#0d1117] border border-[#30363d] rounded-2xl w-full max-w-md overflow-hidden shadow-2xl z-10"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-4 border-b border-[#30363d] flex justify-between items-center bg-[#161b22]">
+                  <h3 className="font-bold flex items-center gap-2">
+                    <Calendar className="w-4 h-4 text-purple-400" />
+                    Backtesting Engine (Simple Strategy)
+                  </h3>
+                  <button
+                    onClick={() => setIsBacktestModalOpen(false)}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-mono">
+                        Trading Target
+                      </label>
+                      <select
+                        value={backtestSymbol}
+                        onChange={(e) => setBacktestSymbol(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500/50 text-white"
+                      >
+                        <option value="BTCUSDT">BTCUSDT</option>
+                        <option value="ETHUSDT">ETHUSDT</option>
+                        <option value="SOLUSDT">SOLUSDT</option>
+                        <option value="XRPUSDT">XRPUSDT</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-mono">
+                        Test Period (YYYY-MM)
+                      </label>
+                      <input
+                        type="month"
+                        value={backtestMonth}
+                        onChange={(e) => setBacktestMonth(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500/50 text-white"
+                        style={{ colorScheme: "dark" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-mono">
+                        Initial Capital (USDT)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={backtestCapital}
+                        onChange={(e) => setBacktestCapital(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500/50 text-white"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-mono">
+                        Order Size (USDT)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={backtestOrderSize}
+                        onChange={(e) => setBacktestOrderSize(e.target.value)}
+                        className="w-full bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500/50 text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={runBacktest}
+                    disabled={isBacktesting}
+                    className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold transition-all flex items-center justify-center gap-2"
+                  >
+                    {isBacktesting ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 fill-current" />
+                    )}
+                    {isBacktesting ? "Running Simulation..." : "Run Backtest (1 Mo.)"}
+                  </button>
+
+                  {backtestStats && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 p-4 bg-[#161b22] border border-[#30363d] rounded-xl space-y-3"
+                    >
+                      <h4 className="text-sm font-bold text-center text-slate-300 font-mono">
+                        Simulation Results
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="bg-[#0d1117] p-2 rounded-lg text-center border border-[#30363d]/50">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                            Net Profit
+                          </p>
+                          <p
+                            className={cn(
+                              "font-mono font-bold",
+                              parseFloat(backtestStats.profit) > 0
+                                ? "text-emerald-400"
+                                : "text-rose-400",
+                            )}
+                          >
+                            {parseFloat(backtestStats.profit) > 0 ? "+" : ""}
+                            {backtestStats.profit} USDT
+                          </p>
+                        </div>
+                        <div className="bg-[#0d1117] p-2 rounded-lg text-center border border-[#30363d]/50">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                            Final Equity
+                          </p>
+                          <p className="font-mono font-bold text-white">
+                            {backtestStats.balance}
+                          </p>
+                        </div>
+                        <div className="bg-[#0d1117] p-2 rounded-lg text-center border border-[#30363d]/50">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                            Win Rate
+                          </p>
+                          <p className="font-mono font-bold text-blue-400">
+                            {backtestStats.totalTrades > 0
+                              ? (
+                                  (backtestStats.winCount /
+                                    (backtestStats.winCount +
+                                      backtestStats.lossCount)) *
+                                  100
+                                ).toFixed(1)
+                              : 0}
+                            %
+                          </p>
+                        </div>
+                        <div className="bg-[#0d1117] p-2 rounded-lg text-center border border-[#30363d]/50">
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                            Max Drawdown
+                          </p>
+                          <p className="font-mono font-bold text-rose-400">
+                            {backtestStats.maxDrawdown}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center text-[11px] text-slate-500 font-mono px-1 pt-1">
+                        <span>Total: {backtestStats.totalTrades} Signals</span>
+                        <span className="flex gap-2">
+                          <span className="text-emerald-500/80">W: {backtestStats.winCount}</span>
+                          <span className="text-rose-500/80">L: {backtestStats.lossCount}</span>
+                        </span>
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
               </motion.div>
             </motion.div>

@@ -1,0 +1,22 @@
+{
+  "geminiKey": "AIzaSyCSJT_Fxobbo5Hz1OkjNonFE4wHxUpX3Rk",
+  "bitgetApiKey": "bg_c0bb357a72c3fb92fd9b5cb49de3c424",
+  "bitgetApiSecret": "ece23d19f8e4a7b113effe079420f05cf9e1b8f433af8063593f40b090c84b45",
+  "bitgetPassphrase": "geminibot2026",
+  "bitgetUseDemo": false,
+  "isRealTradingActive": true,
+  "walletUsage": 5,
+  "selectedSymbols": [
+    "BTC/USDT",
+    "LINK/USDT",
+    "ADA/USDT",
+    "XRP/USDT",
+    "AVAX/USDT",
+    "DOGE/USDT",
+    "DOT/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "SOL/USDT"
+  ],
+  "apiCallCount": 0
+}

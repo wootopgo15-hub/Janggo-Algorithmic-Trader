@@ -1,55 +1,51 @@
-export interface MarketState {
-  trend: string;
-  ema12h: number;
-  ema4h: number;
-  adx1h: number;
-  rsi15m: number;
-  bbUpper: number;
-  bbLower: number;
-  currentPrice: number;
+export type BotPhase = 'Uptrend' | 'Downtrend' | 'Sideways' | 'Unknown';
+
+export interface CoinState {
+  symbol: string;
+  active: boolean;
+  phase: BotPhase;
+  pnl: number;
+  longActive: boolean;
+  shortActive: boolean;
+  balance: number;
+  entryPrice?: number;
+  entryTime?: number; // UNIX timestamp
+  positionType?: 'LONG' | 'SHORT';
+  margin?: number;
+  maxProfitPct?: number; // for trailing stop
+  halfTaken?: boolean; // for 50% TP
+  fiboTarget?: number;
+  entryPhase?: BotPhase;
 }
 
-export interface PositionState {
-  side: string;
-  entryPrice: number;
-  tpPrice: number;
-  slPrice: number;
-  balanceUsdt: number;
-}
-
-export interface BacktestReport {
-  totalTrades: number;
-  winRate: string;
-  returnPct: string;
-  mdd: string;
-  finalBalance: string;
-  aiReport?: string;
-}
-
-export interface EquityCurvePoint {
-  date: number;
-  equity: number;
+export interface BotStatusResponse {
+  masterActive: boolean;
+  totalBalance: number;
+  totalPnl: number;
+  timeOffsetMs: number;
+  tradingAllocationPct: number;
+  coins: CoinState[];
+  apiStatus: string;
 }
 
 export interface TradeRecord {
-  date: number;
-  side: string;
-  exitType: 'TP' | 'SL';
+  id: string;
+  symbol: string;
+  type: 'LONG' | 'SHORT';
+  entryTime: string;
+  exitTime: string;
   entryPrice: number;
   exitPrice: number;
   pnl: number;
-  balance: number;
+  pnlPct: number;
+  phase: BotPhase;
 }
 
-export interface StatusResponse {
-  state: MarketState;
-  position: PositionState;
-  settings?: {
-    walletUsage: number;
-  };
-  expectedReturns?: {
-    daily: number;
-    fifteenDays: number;
-    thirtyDays: number;
-  };
+export interface BacktestSummary {
+  winRate: number;
+  mdd: number;
+  netProfit: number;
+  totalTrades: number;
+  chartData: Array<{ time: number; open: number; high: number; low: number; close: number; signal?: string; exit?: boolean }>;
+  recentTrades: TradeRecord[];
 }

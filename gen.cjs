@@ -1,4 +1,6 @@
-import 'dotenv/config';
+const fs = require('fs');
+
+const serverStr = `import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import cors from 'cors';
@@ -233,7 +235,7 @@ app.get('/api/backtest', async (req, res) => {
     
     const formatTime = (ms: number) => {
       const d = new Date(ms);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      return \`\${d.getFullYear()}-\${String(d.getMonth() + 1).padStart(2, '0')}-\${String(d.getDate()).padStart(2, '0')} \${String(d.getHours()).padStart(2, '0')}:\${String(d.getMinutes()).padStart(2, '0')}\`;
     };
 
     for (let i = 320; i < chartData.length; i++) {
@@ -448,7 +450,7 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(\`Server running on port \${PORT}\`);
   });
 }
 
@@ -459,12 +461,12 @@ const candleCache4h: Record<string, any[]> = {};
 async function watchExchangeData() {
   io.on('connection', (socket) => {
     Object.keys(candleCache).forEach(coin => {
-      socket.emit(`seed:${coin}`, candleCache[coin]);
+      socket.emit(\`seed:\${coin}\`, candleCache[coin]);
     });
     
     socket.on('request_seed', (coin) => {
       if (candleCache[coin]) {
-        socket.emit(`seed:${coin}`, candleCache[coin]);
+        socket.emit(\`seed:\${coin}\`, candleCache[coin]);
       }
     });
   });
@@ -541,10 +543,10 @@ async function watchExchangeData() {
        candleCache[coin] = initialCandles.map((c: any) => ({
          time: Math.floor(c[0] / 1000), open: c[1], high: c[2], low: c[3], close: c[4], volume: c[5] 
        }));
-       io.emit(`seed:${coin}`, candleCache[coin]);
+       io.emit(\`seed:\${coin}\`, candleCache[coin]);
        
      } catch (e: any) {
-        console.error(`Error fetching initial data for ${symbol}:`, e.message);
+        console.error(\`Error fetching initial data for \${symbol}:\`, e.message);
         let price = MOCK_PRICES[coin.replace(':USDT', '')] || 100;
         const now = Math.floor(Date.now() / 1000);
         const dummyCandles = [];
@@ -559,7 +561,7 @@ async function watchExchangeData() {
           dummyCandles.push({ time, open, high, low, close, volume });
         }
         candleCache[coin] = dummyCandles;
-        io.emit(`seed:${coin}`, candleCache[coin]);
+        io.emit(\`seed:\${coin}\`, candleCache[coin]);
      }
      
      (async () => {
@@ -568,7 +570,7 @@ async function watchExchangeData() {
        
        const watchdogInterval = setInterval(() => {
          if (Date.now() - lastMessageTime > 180000) {
-           console.log(`Watchdog timeout for ${symbol}. Forcing reconnect...`);
+           console.log(\`Watchdog timeout for \${symbol}. Forcing reconnect...\`);
            const url = (exchange.urls as any)?.api?.ws;
            if (url) {
              exchange.clients?.[url]?.close?.(); 
@@ -606,13 +608,13 @@ async function watchExchangeData() {
                       candleCache[coin].sort((a,b) => a.time - b.time);
                       if (candleCache[coin].length > 500) candleCache[coin].splice(0, candleCache[coin].length - 500);
                       
-                      io.emit(`seed:${coin}`, candleCache[coin]);
+                      io.emit(\`seed:\${coin}\`, candleCache[coin]);
                     } catch (bfErr: any) {
-                      console.error(`[${symbol}] Backfill failed:`, bfErr.message);
+                      console.error(\`[\${symbol}] Backfill failed:\`, bfErr.message);
                     }
                  }
                  
-                 io.emit(`candle:${coin}`, candle);
+                 io.emit(\`candle:\${coin}\`, candle);
                  
                  const last = candleCache[coin]?.[candleCache[coin].length - 1];
                  if (last && last.time === candle.time) {
@@ -682,9 +684,9 @@ async function watchExchangeData() {
                      }
 
                      if (shouldExit) {
-                         console.log(`[${symbol}] EXITING POSITION: ${exitReason}`);
+                         console.log(\`[\${symbol}] EXITING POSITION: \${exitReason}\`);
                          if (exchange.apiKey) {
-                            console.log(`Executing Bitget Market Close for ${symbol}`);
+                            console.log(\`Executing Bitget Market Close for \${symbol}\`);
                          }
                          
                          totalBalance += rawPnl;
@@ -750,7 +752,7 @@ async function watchExchangeData() {
 
                        if (shouldEnterLong || shouldEnterShort) {
                            if (exchange.apiKey) {
-                              console.log(`LIVE ORDER: ${shouldEnterLong ? 'LONG' : 'SHORT'} on ${symbol}`);
+                              console.log(\`LIVE ORDER: \${shouldEnterLong ? 'LONG' : 'SHORT'} on \${symbol}\`);
                            }
                            coinObj.positionType = shouldEnterLong ? 'LONG' : 'SHORT';
                            coinObj.entryPrice = currentPrice;
@@ -773,7 +775,7 @@ async function watchExchangeData() {
                }
              }
          } catch (e: any) {
-           console.error(`Stream error ${symbol}:`, e.message);
+           console.error(\`Stream error \${symbol}:\`, e.message);
            await new Promise(r => setTimeout(r, 5000));
          }
        }
@@ -786,3 +788,6 @@ async function watchExchangeData() {
 startServer().then(() => {
   watchExchangeData();
 });
+`;
+fs.writeFileSync('server.ts', serverStr);
+console.log('Regenerated server.ts perfectly.');

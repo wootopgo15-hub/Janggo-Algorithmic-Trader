@@ -22,7 +22,5 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  },
-  "include": ["src/**/*", "server.ts", "vite.config.ts"],
-  "exclude": ["node_modules", "dist", "patch*.ts", "test*.ts", "update_loss_logic.ts", "patch.ts", "patch2.ts"]
+  }
 }

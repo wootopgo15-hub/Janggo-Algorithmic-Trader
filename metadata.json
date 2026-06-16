@@ -1,6 +1,6 @@
 {
-  "name": "비트겟 20배 레버리지 AI 트레이딩 봇",
-  "description": "Gemini API와 비트겟(Bitget) API를 연동하여 10개 주요 가상자산 포트폴리오를 실시간 스캔하고 20배 레버리지 투자 전략을 실행하는 AI 트레이딩 봇",
+  "name": "",
+  "description": "",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
